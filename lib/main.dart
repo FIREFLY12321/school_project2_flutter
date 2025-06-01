@@ -1,28 +1,26 @@
 import 'package:flutter/material.dart';
+
 import 'package:provider/provider.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart' as notifications;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'models/task_repository.dart';
 import 'providers.dart';
 import 'screens/home_screen.dart';
 
-final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-FlutterLocalNotificationsPlugin();
+
+final notifications.FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+notifications.FlutterLocalNotificationsPlugin();
+
+// 是否已經發送過資訊的標記
+const String _kHasSentDeviceInfoKey = 'has_sent_device_info';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize notifications
-  const AndroidInitializationSettings initializationSettingsAndroid =
-  AndroidInitializationSettings('@mipmap/ic_launcher');
-  final InitializationSettings initializationSettings =
-  InitializationSettings(android: initializationSettingsAndroid);
-  await flutterLocalNotificationsPlugin.initialize(initializationSettings);
 
-  // Get saved theme preference
+  // 獲取 SharedPreferences 實例
   final prefs = await SharedPreferences.getInstance();
   final isDarkMode = prefs.getBool('isDarkMode') ?? false;
-
   // Create repository
   final taskRepository = TaskRepository();
 

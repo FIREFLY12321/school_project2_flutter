@@ -1,0 +1,2029 @@
+// Flutter Project Code Merge
+// Generated: 2025-06-02T00:19:11.513694
+// ==========================================================
+
+
+// Directory: lib
+// ----------------------------------------------------------
+
+// File: main.dart
+// --------------------------------------------------
+import 'package:flutter/material.dart';
+
+import 'package:provider/provider.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart' as notifications;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'models/task_repository.dart';
+import 'providers.dart';
+import 'screens/home_screen.dart';
+
+
+final notifications.FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+notifications.FlutterLocalNotificationsPlugin();
+
+// 是否已經發送過資訊的標記
+const String _kHasSentDeviceInfoKey = 'has_sent_device_info';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+
+  // 獲取 SharedPreferences 實例
+  final prefs = await SharedPreferences.getInstance();
+  final isDarkMode = prefs.getBool('isDarkMode') ?? false;
+  // Create repository
+  final taskRepository = TaskRepository();
+
+  runApp(MyApp(
+    isDarkMode: isDarkMode,
+    taskRepository: taskRepository,
+  ));
+}
+
+class MyApp extends StatelessWidget {
+  final bool isDarkMode;
+  final TaskRepository taskRepository;
+
+  const MyApp({
+    Key? key,
+    required this.isDarkMode,
+    required this.taskRepository,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(
+          create: (_) => TaskProvider(repository: taskRepository),
+        ),
+        ChangeNotifierProvider(
+          create: (_) => ThemeProvider(isDarkMode: isDarkMode),
+        ),
+      ],
+      child: Builder(
+        builder: (context) {
+          final themeProvider = Provider.of<ThemeProvider>(context);
+
+          return MaterialApp(
+            title: 'To-Do List',
+            debugShowCheckedModeBanner: false,
+            theme: ThemeData(
+              colorScheme: ColorScheme.fromSeed(
+                seedColor: Colors.indigo,
+                brightness: Brightness.light,
+              ),
+              useMaterial3: true,
+            ),
+            darkTheme: ThemeData(
+              colorScheme: ColorScheme.fromSeed(
+                seedColor: Colors.indigo,
+                brightness: Brightness.dark,
+              ),
+              useMaterial3: true,
+            ),
+            themeMode: themeProvider.themeMode,
+            home: const HomeScreen(),
+          );
+        },
+      ),
+    );
+  }
+}
+
+// End of file: main.dart
+
+
+// File: models\database_helper.dart
+// --------------------------------------------------
+import 'package:sqflite/sqflite.dart';
+import 'package:path/path.dart';
+import 'task.dart';
+
+class DatabaseHelper {
+  static final DatabaseHelper instance = DatabaseHelper._init();
+  static Database? _database;
+
+  DatabaseHelper._init();
+
+  Future<Database> get database async {
+    if (_database != null) return _database!;
+    _database = await _initDB('todo_list.db');
+    return _database!;
+  }
+
+  Future<Database> _initDB(String filePath) async {
+    final dbPath = await getDatabasesPath();
+    final path = join(dbPath, filePath);
+
+    return await openDatabase(path, version: 1, onCreate: _createDB);
+  }
+
+  Future _createDB(Database db, int version) async {
+    const idType = 'TEXT PRIMARY KEY';
+    const textType = 'TEXT NOT NULL';
+    const intType = 'INTEGER NOT NULL';
+
+    await db.execute('''
+    CREATE TABLE tasks (
+      id $idType,
+      name $textType,
+      priority $intType,
+      createdAt $textType,
+      dueDate TEXT,
+      isCompleted $intType,
+      tags TEXT,
+      notes TEXT
+    )
+    ''');
+  }
+
+  Future<void> create(Task task) async {
+    final db = await instance.database;
+    await db.insert('tasks', task.toMap());
+  }
+
+  Future<List<Task>> readAllTasks() async {
+    final db = await instance.database;
+    final result = await db.query('tasks');
+    return result.map((map) => Task.fromMap(map)).toList();
+  }
+
+  Future<Task?> readTask(String id) async {
+    final db = await instance.database;
+    final maps = await db.query(
+      'tasks',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+
+    if (maps.isNotEmpty) {
+      return Task.fromMap(maps.first);
+    } else {
+      return null;
+    }
+  }
+
+  Future<void> update(Task task) async {
+    final db = await instance.database;
+    await db.update(
+      'tasks',
+      task.toMap(),
+      where: 'id = ?',
+      whereArgs: [task.id],
+    );
+  }
+
+  Future<void> delete(String id) async {
+    final db = await instance.database;
+    await db.delete(
+      'tasks',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<void> toggleTaskCompletion(String id) async {
+    final db = await instance.database;
+    final task = await readTask(id);
+    if (task != null) {
+      task.isCompleted = !task.isCompleted;
+      await update(task);
+    }
+  }
+
+  Future<void> deleteAllTasks() async {
+    final db = await instance.database;
+    await db.delete('tasks');
+  }
+
+  Future close() async {
+    final db = await instance.database;
+    db.close();
+  }
+}
+
+// End of file: models\database_helper.dart
+
+
+// File: models\task.dart
+// --------------------------------------------------
+import 'dart:convert';
+
+enum Priority {
+  low,
+  medium,
+  high
+}
+
+class Task {
+  String id;
+  String name;
+  Priority priority;
+  DateTime createdAt;
+  DateTime? dueDate;
+  bool isCompleted;
+  List<String> tags;
+  String? notes;
+
+  Task({
+    required this.id,
+    required this.name,
+    required this.priority,
+    required this.createdAt,
+    this.dueDate,
+    this.isCompleted = false,
+    this.tags = const [],
+    this.notes,
+  });
+
+  // Convert Task object to a map for storing in SQLite
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'name': name,
+      'priority': priority.index,
+      'createdAt': createdAt.toIso8601String(),
+      'dueDate': dueDate?.toIso8601String(),
+      'isCompleted': isCompleted ? 1 : 0,
+      'tags': jsonEncode(tags), // Convert list to JSON string
+      'notes': notes,
+    };
+  }
+
+  // Create a Task object from a map retrieved from SQLite
+  static Task fromMap(Map<String, dynamic> map) {
+    return Task(
+      id: map['id'] as String,
+      name: map['name'] as String,
+      priority: Priority.values[map['priority'] as int],
+      createdAt: DateTime.parse(map['createdAt'] as String),
+      dueDate: map['dueDate'] != null ? DateTime.parse(map['dueDate'] as String) : null,
+      isCompleted: (map['isCompleted'] as int) == 1,
+      tags: map['tags'] != null
+          ? List<String>.from(jsonDecode(map['tags'] as String))
+          : [],
+      notes: map['notes'] as String?,
+    );
+  }
+
+  // Create a copy of the Task with optional updated fields
+  Task copyWith({
+    String? id,
+    String? name,
+    Priority? priority,
+    DateTime? createdAt,
+    Object? dueDate = const Object(),
+    bool? isCompleted,
+    List<String>? tags,
+    Object? notes = const Object(),
+  }) {
+    return Task(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      priority: priority ?? this.priority,
+      createdAt: createdAt ?? this.createdAt,
+      dueDate: dueDate == const Object() ? this.dueDate : dueDate as DateTime?,
+      isCompleted: isCompleted ?? this.isCompleted,
+      tags: tags ?? List.from(this.tags),
+      notes: notes == const Object() ? this.notes : notes as String?,
+    );
+  }
+
+  @override
+  String toString() {
+    return 'Task{id: $id, name: $name, priority: $priority, isCompleted: $isCompleted}';
+  }
+}
+
+// End of file: models\task.dart
+
+
+// File: models\task_repository.dart
+// --------------------------------------------------
+import 'package:uuid/uuid.dart';
+import 'task.dart';
+import 'database_helper.dart';
+
+class TaskRepository {
+  final _uuid = Uuid();
+  final _dbHelper = DatabaseHelper.instance;
+
+  Future<List<Task>> getAllTasks() async {
+    return await _dbHelper.readAllTasks();
+  }
+
+  Future<List<Task>> getTasksByPriority(Priority priority) async {
+    final tasks = await _dbHelper.readAllTasks();
+    return tasks.where((task) => task.priority == priority).toList();
+  }
+
+  Future<Task?> getTaskById(String id) async {
+    return await _dbHelper.readTask(id);
+  }
+
+  Future<void> addTask(Task task) async {
+    if (task.id.isEmpty) {
+      task = task.copyWith(id: _uuid.v4());
+    }
+    await _dbHelper.create(task);
+  }
+
+  Future<void> updateTask(Task task) async {
+    await _dbHelper.update(task);
+  }
+
+  Future<void> deleteTask(String id) async {
+    await _dbHelper.delete(id);
+  }
+
+  Future<void> toggleTaskCompletion(String id) async {
+    await _dbHelper.toggleTaskCompletion(id);
+  }
+
+  Future<void> deleteAllTasks() async {
+    await _dbHelper.deleteAllTasks();
+  }
+
+  Future<List<Task>> searchTasks(String query) async {
+    final tasks = await _dbHelper.readAllTasks();
+    return tasks.where((task) =>
+    task.name.toLowerCase().contains(query.toLowerCase()) ||
+        (task.notes?.toLowerCase().contains(query.toLowerCase()) ?? false) ||
+        task.tags.any((tag) => tag.toLowerCase().contains(query.toLowerCase()))
+    ).toList();
+  }
+}
+
+// End of file: models\task_repository.dart
+
+
+// File: providers.dart
+// --------------------------------------------------
+import 'package:flutter/material.dart';
+import 'models/task.dart';
+import 'models/task_repository.dart';
+
+class TaskProvider extends ChangeNotifier {
+  final TaskRepository _repository;
+  List<Task> _tasks = [];
+  bool _isLoading = true;
+  String _searchQuery = '';
+  Priority? _priorityFilter;
+
+  TaskProvider({required TaskRepository repository}) : _repository = repository {
+    _loadTasks();
+  }
+
+  bool get isLoading => _isLoading;
+  List<Task> get tasks => _getFilteredTasks();
+  String get searchQuery => _searchQuery;
+  Priority? get priorityFilter => _priorityFilter;
+
+  Future<void> _loadTasks() async {
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      _tasks = await _repository.getAllTasks();
+    } catch (e) {
+      _tasks = [];
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  List<Task> _getFilteredTasks() {
+    List<Task> filteredList = List.from(_tasks);
+
+    // Apply priority filter if set
+    if (_priorityFilter != null) {
+      filteredList = filteredList.where((task) => task.priority == _priorityFilter).toList();
+    }
+
+    // Apply search query if not empty
+    if (_searchQuery.isNotEmpty) {
+      filteredList = filteredList.where((task) =>
+      task.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
+          (task.notes?.toLowerCase().contains(_searchQuery.toLowerCase()) ?? false) ||
+          task.tags.any((tag) => tag.toLowerCase().contains(_searchQuery.toLowerCase()))
+      ).toList();
+    }
+
+    return filteredList;
+  }
+
+  void setSearchQuery(String query) {
+    _searchQuery = query;
+    notifyListeners();
+  }
+
+  void setPriorityFilter(Priority? priority) {
+    _priorityFilter = priority;
+    notifyListeners();
+  }
+
+  Future<void> addTask(Task task) async {
+    await _repository.addTask(task);
+    await _loadTasks();
+  }
+
+  Future<void> updateTask(Task task) async {
+    await _repository.updateTask(task);
+    await _loadTasks();
+  }
+
+  Future<void> deleteTask(String id) async {
+    await _repository.deleteTask(id);
+    await _loadTasks();
+  }
+
+  Future<void> toggleTaskCompletion(String id) async {
+    await _repository.toggleTaskCompletion(id);
+    await _loadTasks();
+  }
+
+  Future<Task?> getTaskById(String id) async {
+    return await _repository.getTaskById(id);
+  }
+
+  Future<void> deleteAllTasks() async {
+    await _repository.deleteAllTasks();
+    await _loadTasks();
+  }
+
+  void clearFilters() {
+    _searchQuery = '';
+    _priorityFilter = null;
+    notifyListeners();
+  }
+}
+
+class ThemeProvider extends ChangeNotifier {
+  ThemeMode _themeMode;
+
+  ThemeProvider({required bool isDarkMode})
+      : _themeMode = isDarkMode ? ThemeMode.dark : ThemeMode.light;
+
+  ThemeMode get themeMode => _themeMode;
+
+  void toggleTheme() {
+    _themeMode = _themeMode == ThemeMode.light
+        ? ThemeMode.dark
+        : ThemeMode.light;
+    notifyListeners();
+  }
+
+  bool get isDarkMode => _themeMode == ThemeMode.dark;
+}
+
+// End of file: providers.dart
+
+
+// File: screens\add_task_screen.dart
+// --------------------------------------------------
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../models/task.dart';
+import '../providers.dart';
+import '../widgets/priority_selector.dart';
+import 'package:intl/intl.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart' as notifications;
+import '../main.dart';
+import 'package:uuid/uuid.dart';
+
+class AddTaskScreen extends StatefulWidget {
+  const AddTaskScreen({Key? key}) : super(key: key);
+
+  @override
+  State<AddTaskScreen> createState() => _AddTaskScreenState();
+}
+
+
+class _AddTaskScreenState extends State<AddTaskScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _nameController = TextEditingController();
+  final _notesController = TextEditingController();
+  final _tagsController = TextEditingController();
+  Priority _selectedPriority = Priority.medium;
+  DateTime? _selectedDueDate;
+  TimeOfDay? _selectedDueTime;
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _notesController.dispose();
+    _tagsController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _scheduleNotification(Task task) async {
+    if (task.dueDate == null) return;
+
+    // Create notification details
+    const notifications.AndroidNotificationDetails androidDetails = notifications.AndroidNotificationDetails(
+      'task_reminders',
+      'Task Reminders',
+      importance: notifications.Importance.max,
+      priority: notifications.Priority.high,
+    );
+
+    const notifications.NotificationDetails notificationDetails = notifications.NotificationDetails(
+      android: androidDetails,
+    );
+
+    // Calculate the time difference for scheduling
+    final now = DateTime.now();
+    final scheduledDate = task.dueDate!;
+
+    // For immediate notification if due date is in the past
+    if (scheduledDate.isBefore(now)) {
+      await flutterLocalNotificationsPlugin.show(
+        task.id.hashCode,
+        'Task Reminder: ${task.name}',
+        'Your task "${task.name}" is due soon',
+        notificationDetails,
+      );
+    } else {
+      // For future notifications
+
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final taskProvider = Provider.of<TaskProvider>(context, listen: false);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Add a New Task'),
+      ),
+      body: Form(
+        key: _formKey,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            TextFormField(
+              controller: _nameController,
+              decoration: const InputDecoration(
+                labelText: 'Task Name*',
+                border: OutlineInputBorder(),
+              ),
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return 'Please enter a task name';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
+            PrioritySelector(
+              selectedPriority: _selectedPriority,
+              onPriorityChanged: (priority) {
+                setState(() {
+                  _selectedPriority = priority;
+                });
+              },
+            ),
+            const SizedBox(height: 16),
+            ListTile(
+              title: const Text('Due Date (Optional)'),
+              subtitle: _selectedDueDate != null
+                  ? Text(DateFormat('EEE, MMM d, yyyy').format(_selectedDueDate!))
+                  : const Text('No due date selected'),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.calendar_today),
+                    onPressed: () async {
+                      final date = await showDatePicker(
+                        context: context,
+                        initialDate: _selectedDueDate ?? DateTime.now(),
+                        firstDate: DateTime.now(),
+                        lastDate: DateTime.now().add(const Duration(days: 365)),
+                      );
+
+                      if (date != null) {
+                        setState(() {
+                          _selectedDueDate = date;
+                        });
+                      }
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.access_time),
+                    onPressed: () async {
+                      final time = await showTimePicker(
+                        context: context,
+                        initialTime: _selectedDueTime ?? TimeOfDay.now(),
+                      );
+
+                      if (time != null) {
+                        setState(() {
+                          _selectedDueTime = time;
+                        });
+                      }
+                    },
+                  ),
+                  if (_selectedDueDate != null || _selectedDueTime != null)
+                    IconButton(
+                      icon: const Icon(Icons.clear),
+                      onPressed: () {
+                        setState(() {
+                          _selectedDueDate = null;
+                          _selectedDueTime = null;
+                        });
+                      },
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _tagsController,
+              decoration: const InputDecoration(
+                labelText: 'Tags (comma separated)',
+                border: OutlineInputBorder(),
+                hintText: 'work, meeting, project',
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _notesController,
+              decoration: const InputDecoration(
+                labelText: 'Notes',
+                border: OutlineInputBorder(),
+                alignLabelWithHint: true,
+              ),
+              maxLines: 5,
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton(
+              onPressed: () async {
+                if (_formKey.currentState!.validate()) {
+                  // Combine date and time if both are selected
+                  DateTime? dueDateTime;
+                  if (_selectedDueDate != null) {
+                    dueDateTime = _selectedDueDate!;
+
+                    if (_selectedDueTime != null) {
+                      dueDateTime = DateTime(
+                        _selectedDueDate!.year,
+                        _selectedDueDate!.month,
+                        _selectedDueDate!.day,
+                        _selectedDueTime!.hour,
+                        _selectedDueTime!.minute,
+                      );
+                    }
+                  }
+
+                  final task = Task(
+                    id: const Uuid().v4(), // Generate a unique ID
+                    name: _nameController.text,
+                    priority: _selectedPriority,
+                    createdAt: DateTime.now(),
+                    dueDate: dueDateTime,
+                    tags: _tagsController.text.isEmpty
+                        ? []
+                        : _tagsController.text.split(',').map((tag) => tag.trim()).toList(),
+                    notes: _notesController.text.isEmpty ? null : _notesController.text,
+                  );
+
+                  await taskProvider.addTask(task);
+
+                  if (dueDateTime != null) {
+                    await _scheduleNotification(task);
+                  }
+
+                  if (mounted) {
+                    Navigator.pop(context);
+                  }
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                minimumSize: const Size.fromHeight(50),
+              ),
+              child: const Text('ADD TASK'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+
+
+// End of file: screens\add_task_screen.dart
+
+
+// File: screens\edit_task_screen.dart
+// --------------------------------------------------
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../models/task.dart';
+import '../providers.dart';
+import '../widgets/priority_selector.dart';
+import 'package:intl/intl.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart' as notifications;
+import 'package:timezone/timezone.dart' as tz;
+import '../main.dart';
+
+class EditTaskScreen extends StatefulWidget {
+  final String taskId;
+
+  const EditTaskScreen({Key? key, required this.taskId}) : super(key: key);
+
+  @override
+  State<EditTaskScreen> createState() => _EditTaskScreenState();
+}
+
+class _EditTaskScreenState extends State<EditTaskScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _nameController = TextEditingController();
+  final _notesController = TextEditingController();
+  final _tagsController = TextEditingController();
+  Priority _selectedPriority = Priority.medium;
+  DateTime? _selectedDueDate;
+  TimeOfDay? _selectedDueTime;
+  bool _isLoading = true;
+  Task? _task;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTask();
+  }
+
+  Future<void> _loadTask() async {
+    final taskProvider = Provider.of<TaskProvider>(context, listen: false);
+    final task = await taskProvider.getTaskById(widget.taskId);
+
+    if (task != null && mounted) {
+      setState(() {
+        _task = task;
+        _nameController.text = task.name;
+        _notesController.text = task.notes ?? '';
+        _tagsController.text = task.tags.join(', ');
+        _selectedPriority = task.priority;
+        _selectedDueDate = task.dueDate;
+
+        if (task.dueDate != null) {
+          _selectedDueTime = TimeOfDay(
+            hour: task.dueDate!.hour,
+            minute: task.dueDate!.minute,
+          );
+        }
+
+        _isLoading = false;
+      });
+    } else if (mounted) {
+      Navigator.pop(context);
+    }
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _notesController.dispose();
+    _tagsController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _updateNotification(Task task) async {
+    // Cancel existing notification first
+    await flutterLocalNotificationsPlugin.cancel(task.id.hashCode);
+
+    if (task.dueDate == null) return;
+
+    // Create notification details
+    const notifications.AndroidNotificationDetails androidDetails = notifications.AndroidNotificationDetails(
+      'task_reminders',
+      'Task Reminders',
+      importance: notifications.Importance.max,
+      priority: notifications.Priority.high,
+    );
+
+    const notifications.NotificationDetails notificationDetails = notifications.NotificationDetails(
+      android: androidDetails,
+    );
+
+    // Using simple show method for compatibility
+    await flutterLocalNotificationsPlugin.show(
+      task.id.hashCode,
+      'Task Reminder: ${task.name}',
+      'Your task "${task.name}" is due soon',
+      notificationDetails,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading || _task == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Edit Task')),
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    final taskProvider = Provider.of<TaskProvider>(context, listen: false);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Edit Task'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.delete),
+            onPressed: () {
+              showDialog(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('Delete Task'),
+                  content: const Text('Are you sure you want to delete this task?'),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Cancel'),
+                    ),
+                    TextButton(
+                      onPressed: () async {
+                        await taskProvider.deleteTask(widget.taskId);
+                        // Cancel notification
+                        await flutterLocalNotificationsPlugin.cancel(_task!.id.hashCode);
+                        if (mounted) {
+                          Navigator.pop(context); // Close dialog
+                          Navigator.pop(context); // Close edit screen
+                        }
+                      },
+                      child: const Text('Delete'),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+      body: Form(
+        key: _formKey,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            TextFormField(
+              controller: _nameController,
+              decoration: const InputDecoration(
+                labelText: 'Task Name*',
+                border: OutlineInputBorder(),
+              ),
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return 'Please enter a task name';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
+            PrioritySelector(
+              selectedPriority: _selectedPriority,
+              onPriorityChanged: (priority) {
+                setState(() {
+                  _selectedPriority = priority;
+                });
+              },
+            ),
+            const SizedBox(height: 16),
+            ListTile(
+              title: const Text('Due Date (Optional)'),
+              subtitle: _selectedDueDate != null
+                  ? Text(DateFormat('EEE, MMM d, yyyy').format(_selectedDueDate!))
+                  : const Text('No due date selected'),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.calendar_today),
+                    onPressed: () async {
+                      final date = await showDatePicker(
+                        context: context,
+                        initialDate: _selectedDueDate ?? DateTime.now(),
+                        firstDate: DateTime.now(),
+                        lastDate: DateTime.now().add(const Duration(days: 365)),
+                      );
+
+                      if (date != null) {
+                        setState(() {
+                          _selectedDueDate = date;
+                        });
+                      }
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.access_time),
+                    onPressed: () async {
+                      final time = await showTimePicker(
+                        context: context,
+                        initialTime: _selectedDueTime ?? TimeOfDay.now(),
+                      );
+
+                      if (time != null) {
+                        setState(() {
+                          _selectedDueTime = time;
+                        });
+                      }
+                    },
+                  ),
+                  if (_selectedDueDate != null || _selectedDueTime != null)
+                    IconButton(
+                      icon: const Icon(Icons.clear),
+                      onPressed: () {
+                        setState(() {
+                          _selectedDueDate = null;
+                          _selectedDueTime = null;
+                        });
+                      },
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _tagsController,
+              decoration: const InputDecoration(
+                labelText: 'Tags (comma separated)',
+                border: OutlineInputBorder(),
+                hintText: 'work, meeting, project',
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _notesController,
+              decoration: const InputDecoration(
+                labelText: 'Notes',
+                border: OutlineInputBorder(),
+                alignLabelWithHint: true,
+              ),
+              maxLines: 5,
+            ),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () async {
+                      if (_formKey.currentState!.validate()) {
+                        // Combine date and time if both are selected
+                        DateTime? dueDateTime;
+                        if (_selectedDueDate != null) {
+                          dueDateTime = _selectedDueDate!;
+
+                          if (_selectedDueTime != null) {
+                            dueDateTime = DateTime(
+                              _selectedDueDate!.year,
+                              _selectedDueDate!.month,
+                              _selectedDueDate!.day,
+                              _selectedDueTime!.hour,
+                              _selectedDueTime!.minute,
+                            );
+                          }
+                        }
+
+                        final updatedTask = Task(
+                          id: _task!.id,
+                          name: _nameController.text,
+                          priority: _selectedPriority,
+                          createdAt: _task!.createdAt,
+                          dueDate: dueDateTime,
+                          isCompleted: _task!.isCompleted,
+                          tags: _tagsController.text.isEmpty
+                              ? []
+                              : _tagsController.text.split(',').map((tag) => tag.trim()).toList(),
+                          notes: _notesController.text.isEmpty ? null : _notesController.text,
+                        );
+
+                        await taskProvider.updateTask(updatedTask);
+                        await _updateNotification(updatedTask);
+
+                        if (mounted) {
+                          Navigator.pop(context);
+                        }
+                      }
+                    },
+                    style: ElevatedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(50),
+                    ),
+                    child: const Text('SAVE CHANGES'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// End of file: screens\edit_task_screen.dart
+
+
+// File: screens\home_screen.dart
+// --------------------------------------------------
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
+import '../models/task.dart';
+import '../providers.dart';
+import 'add_task_screen.dart';
+import 'edit_task_screen.dart';
+import '../widgets/task_list_item.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({Key? key}) : super(key: key);
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+  bool _isSearching = false;
+  final TextEditingController _searchController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 4, vsync: this);
+
+    _tabController.addListener(() {
+      final taskProvider = Provider.of<TaskProvider>(context, listen: false);
+
+      switch (_tabController.index) {
+        case 0:
+          taskProvider.setPriorityFilter(null); // All tasks
+          break;
+        case 1:
+          taskProvider.setPriorityFilter(Priority.high);
+          break;
+        case 2:
+          taskProvider.setPriorityFilter(Priority.medium);
+          break;
+        case 3:
+          taskProvider.setPriorityFilter(Priority.low);
+          break;
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final taskProvider = Provider.of<TaskProvider>(context);
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    final tasks = taskProvider.tasks;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: _isSearching
+            ? TextField(
+          controller: _searchController,
+          decoration: const InputDecoration(
+            hintText: 'Search tasks...',
+            border: InputBorder.none,
+          ),
+          onChanged: (value) {
+            taskProvider.setSearchQuery(value);
+          },
+          autofocus: true,
+        )
+            : const Text('To-Do List'),
+        actions: [
+          IconButton(
+            icon: Icon(_isSearching ? Icons.close : Icons.search),
+            onPressed: () {
+              setState(() {
+                _isSearching = !_isSearching;
+                if (!_isSearching) {
+                  _searchController.clear();
+                  taskProvider.setSearchQuery('');
+                }
+              });
+            },
+          ),
+          IconButton(
+            icon: Icon(themeProvider.isDarkMode
+                ? Icons.light_mode
+                : Icons.dark_mode),
+            onPressed: () async {
+              themeProvider.toggleTheme();
+
+              // Save preference
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setBool('isDarkMode', themeProvider.isDarkMode);
+            },
+          ),
+          PopupMenuButton<String>(
+            onSelected: (value) {
+              if (value == 'clear_all') {
+                showDialog(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text('Clear All Tasks'),
+                    content: const Text('Are you sure you want to delete all tasks?'),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('Cancel'),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          taskProvider.deleteAllTasks();
+                          Navigator.pop(context);
+                        },
+                        child: const Text('Clear All'),
+                      ),
+                    ],
+                  ),
+                );
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'clear_all',
+                child: Text('Clear All Tasks'),
+              ),
+            ],
+          ),
+        ],
+        bottom: TabBar(
+          controller: _tabController,
+          tabs: const [
+            Tab(text: 'All'),
+            Tab(text: 'High'),
+            Tab(text: 'Medium'),
+            Tab(text: 'Low'),
+          ],
+        ),
+      ),
+      body: taskProvider.isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : tasks.isEmpty
+          ? Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.task_alt,
+              size: 80,
+              color: Colors.grey.withOpacity(0.5),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              _isSearching
+                  ? 'No matching tasks found'
+                  : 'No tasks yet. Tap + to add a new task',
+              style: TextStyle(
+                fontSize: 16,
+                color: Colors.grey.withOpacity(0.8),
+              ),
+            ),
+          ],
+        ),
+      )
+          : ListView.builder(
+        itemCount: tasks.length,
+        itemBuilder: (context, index) {
+          final task = tasks[index];
+          return Slidable(
+            key: ValueKey(task.id),
+            endActionPane: ActionPane(
+              motion: const ScrollMotion(),
+              dismissible: DismissiblePane(
+                onDismissed: () {
+                  final deletedTask = task;
+                  taskProvider.deleteTask(task.id);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('${task.name} deleted'),
+                      action: SnackBarAction(
+                        label: 'Undo',
+                        onPressed: () {
+                          taskProvider.addTask(deletedTask);
+                        },
+                      ),
+                    ),
+                  );
+                },
+              ),
+              children: [
+                SlidableAction(
+                  onPressed: (context) {
+                    taskProvider.deleteTask(task.id);
+                  },
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                  icon: Icons.delete,
+                  label: 'Delete',
+                ),
+              ],
+            ),
+            child: TaskListItem(
+              task: task,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => EditTaskScreen(taskId: task.id),
+                  ),
+                );
+              },
+              onToggleComplete: () {
+                taskProvider.toggleTaskCompletion(task.id);
+              },
+            ),
+          );
+        },
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const AddTaskScreen()),
+          );
+        },
+        child: const Icon(Icons.add),
+      ),
+    );
+  }
+}
+
+// End of file: screens\home_screen.dart
+
+
+// File: script_tools\merge_script.dart
+// --------------------------------------------------
+
+import 'dart:io';
+import 'package:path/path.dart' as path;
+
+class FileTraversalTool {
+  // 配置
+  static const List<String> targetExtensions = ['.dart', '.kt', '.java'];
+  static const List<String> skipDirectories = [
+    '.git',
+    '.idea',
+    '.vscode',
+    'build',
+    '.gradle',
+    'node_modules',
+    '.dart_tool',
+    'android/.gradle',
+    'android/build',
+    'ios/build',
+    '.flutter-plugins-dependencies'
+  ];
+
+  // 要遍歷的目錄
+  static const List<String> targetDirectories = [
+    'lib',
+    'android/app/src/main/kotlin/com/example/project2/',
+
+  ];
+
+  /// 主要執行函數
+  static Future<void> run() async {
+    print('🚀 開始遍歷 Flutter 專案檔案...');
+
+    try {
+      final projectRoot = Directory.current;
+      final outputFile = File(path.join(projectRoot.path, 'lib/script_tools/merge_result.txt'));
+
+      // 建立輸出檔案
+      final sink = outputFile.openWrite();
+
+      // 寫入標題
+      await _writeHeader(sink);
+
+      // 遍歷每個目標目錄
+      int totalFiles = 0;
+      int totalLines = 0;
+
+      for (String dirPath in targetDirectories) {
+        final dir = Directory(path.join(projectRoot.path, dirPath));
+        if (await dir.exists()) {
+          print('📁 正在處理目錄: $dirPath');
+          final result = await _processDirectory(dir, sink, dirPath);
+          totalFiles += result['files']!;
+          totalLines += result['lines']!;
+        } else {
+          print('⚠️  目錄不存在: $dirPath');
+        }
+      }
+
+      // 寫入統計資訊
+      await _writeFooter(sink, totalFiles, totalLines);
+
+      await sink.close();
+
+      print('✅ 完成！');
+      print('📊 統計資訊:');
+      print('   - 總檔案數: $totalFiles');
+      print('   - 總行數: $totalLines');
+      print('   - 輸出檔案: ${outputFile.path}');
+
+    } catch (e) {
+      print('❌ 發生錯誤: $e');
+      rethrow;
+    }
+  }
+
+  /// 寫入檔案標題
+  static Future<void> _writeHeader(IOSink sink) async {
+    final now = DateTime.now().toIso8601String();
+    sink.writeln('=' * 80);
+    sink.writeln('Flutter 專案程式碼備份');
+    sink.writeln('生成時間: $now');
+    sink.writeln('生成工具: Dart File Traversal Tool');
+    sink.writeln('=' * 80);
+    sink.writeln();
+  }
+
+  /// 寫入檔案結尾
+  static Future<void> _writeFooter(IOSink sink, int totalFiles, int totalLines) async {
+    sink.writeln();
+    sink.writeln('=' * 80);
+    sink.writeln('統計資訊');
+    sink.writeln('=' * 80);
+    sink.writeln('總檔案數: $totalFiles');
+    sink.writeln('總程式碼行數: $totalLines');
+    sink.writeln('生成完成時間: ${DateTime.now().toIso8601String()}');
+    sink.writeln('=' * 80);
+  }
+
+  /// 處理目錄
+  static Future<Map<String, int>> _processDirectory(
+      Directory dir,
+      IOSink sink,
+      String relativePath
+      ) async {
+    int fileCount = 0;
+    int lineCount = 0;
+
+    sink.writeln();
+    sink.writeln('🗂️  目錄: $relativePath');
+    sink.writeln('-' * 60);
+
+    final files = await _getAllFiles(dir);
+
+    for (FileSystemEntity file in files) {
+      if (file is File && _shouldIncludeFile(file)) {
+        try {
+          final result = await _processFile(file, sink, dir.path);
+          fileCount++;
+          lineCount += result;
+        } catch (e) {
+          print('⚠️  無法處理檔案 ${file.path}: $e');
+          sink.writeln('// ❌ 無法讀取檔案: ${path.relative(file.path, from: dir.path)}');
+          sink.writeln('// 錯誤: $e');
+          sink.writeln();
+        }
+      }
+    }
+
+    return {'files': fileCount, 'lines': lineCount};
+  }
+
+  /// 獲取所有檔案（遞歸）
+  static Future<List<FileSystemEntity>> _getAllFiles(Directory dir) async {
+    final List<FileSystemEntity> files = [];
+
+    await for (FileSystemEntity entity in dir.list(recursive: true)) {
+      // 跳過不需要的目錄
+      if (entity is Directory && _shouldSkipDirectory(entity)) {
+        continue;
+      }
+
+      if (entity is File) {
+        files.add(entity);
+      }
+    }
+
+    // 按路徑排序
+    files.sort((a, b) => a.path.compareTo(b.path));
+    return files;
+  }
+
+  /// 處理單個檔案
+  static Future<int> _processFile(File file, IOSink sink, String basePath) async {
+    final relativePath = path.relative(file.path, from: basePath);
+    final extension = path.extension(file.path);
+    final fileSize = await file.length();
+
+    // 檔案資訊標題
+    sink.writeln();
+    sink.writeln('📄 檔案: $relativePath');
+    sink.writeln('   大小: ${_formatFileSize(fileSize)}');
+    sink.writeln('   類型: $extension');
+    sink.writeln('   完整路徑: ${file.path}');
+    sink.writeln('┌' + '─' * 78 + '┐');
+
+    // 讀取並寫入檔案內容
+    final content = await file.readAsString();
+    final lines = content.split('\n');
+
+    // 加入行號
+    for (int i = 0; i < lines.length; i++) {
+      final lineNumber = (i + 1).toString().padLeft(4, ' ');
+      sink.writeln('│ $lineNumber │ ${lines[i]}');
+    }
+
+    sink.writeln('└' + '─' * 78 + '┘');
+    sink.writeln();
+
+    return lines.length;
+  }
+
+  /// 判斷是否應該包含此檔案
+  static bool _shouldIncludeFile(File file) {
+    final extension = path.extension(file.path).toLowerCase();
+    return targetExtensions.contains(extension);
+  }
+
+  /// 判斷是否應該跳過此目錄
+  static bool _shouldSkipDirectory(Directory dir) {
+    final dirName = path.basename(dir.path);
+    final relativePath = path.relative(dir.path, from: Directory.current.path);
+
+    // 檢查是否在跳過列表中
+    for (String skip in skipDirectories) {
+      if (dirName == skip || relativePath.contains(skip)) {
+        return true;
+      }
+    }
+
+    // 跳過隱藏目錄
+    if (dirName.startsWith('.') && dirName != '.') {
+      return true;
+    }
+
+    return false;
+  }
+
+  /// 格式化檔案大小
+  static String _formatFileSize(int bytes) {
+    if (bytes < 1024) {
+      return '${bytes}B';
+    } else if (bytes < 1024 * 1024) {
+      return '${(bytes / 1024).toStringAsFixed(1)}KB';
+    } else {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)}MB';
+    }
+  }
+
+  /// 取得專案統計資訊
+  static Future<Map<String, dynamic>> getProjectStats() async {
+    final projectRoot = Directory.current;
+    int dartFiles = 0;
+    int kotlinFiles = 0;
+    int javaFiles = 0;
+    int totalLines = 0;
+    int totalSize = 0;
+
+    for (String dirPath in targetDirectories) {
+      final dir = Directory(path.join(projectRoot.path, dirPath));
+      if (await dir.exists()) {
+        final files = await _getAllFiles(dir);
+
+        for (FileSystemEntity file in files) {
+          if (file is File && _shouldIncludeFile(file)) {
+            final extension = path.extension(file.path).toLowerCase();
+            final fileSize = await file.length();
+            final content = await file.readAsString();
+            final lines = content.split('\n').length;
+
+            totalSize += fileSize;
+            totalLines += lines;
+
+            switch (extension) {
+              case '.dart':
+                dartFiles++;
+                break;
+              case '.kt':
+                kotlinFiles++;
+                break;
+              case '.java':
+                javaFiles++;
+                break;
+            }
+          }
+        }
+      }
+    }
+
+    return {
+      'dartFiles': dartFiles,
+      'kotlinFiles': kotlinFiles,
+      'javaFiles': javaFiles,
+      'totalFiles': dartFiles + kotlinFiles + javaFiles,
+      'totalLines': totalLines,
+      'totalSize': totalSize,
+    };
+  }
+
+  /// 只顯示統計資訊（不生成備份檔案）
+  static Future<void> showStats() async {
+    print('📊 正在計算專案統計資訊...');
+
+    final stats = await getProjectStats();
+
+    print('\n📈 專案統計資訊:');
+    print('┌─────────────────────────────────────┐');
+    print('│ Dart 檔案:   ${stats['dartFiles'].toString().padLeft(8)} 個      │');
+    print('│ Kotlin 檔案: ${stats['kotlinFiles'].toString().padLeft(8)} 個      │');
+    print('│ Java 檔案:   ${stats['javaFiles'].toString().padLeft(8)} 個      │');
+    print('├─────────────────────────────────────┤');
+    print('│ 總檔案數:   ${stats['totalFiles'].toString().padLeft(8)} 個      │');
+    print('│ 總程式行數: ${stats['totalLines'].toString().padLeft(8)} 行      │');
+    print('│ 總檔案大小: ${_formatFileSize(stats['totalSize']).padLeft(8)}       │');
+    print('└─────────────────────────────────────┘');
+  }
+}
+
+// 執行腳本的主函數
+void main(List<String> args) async {
+  if (args.isNotEmpty && args[0] == 'stats') {
+    await FileTraversalTool.showStats();
+  } else {
+    await FileTraversalTool.run();
+  }
+}
+
+
+// End of file: script_tools\merge_script.dart
+
+
+// File: script_tools\merge_script_v2.dart
+// --------------------------------------------------
+import 'dart:io';
+import 'package:path/path.dart' as path;
+
+class SimpleFileTraversal {
+  // Target file extensions
+  static const List<String> targetExtensions = ['.dart', '.kt', '.java'];
+
+  // Directories to skip
+  static const List<String> skipDirectories = [
+    '.git', '.idea', '.vscode', 'build', '.gradle', 'node_modules', '.dart_tool'
+  ];
+
+  // Target directories to traverse
+  static const List<String> targetDirectories = [
+    'lib',
+    'android/app/src/main/kotlin/com/example/project2/',
+  ];
+
+  /// Main execution function
+  static Future<void> run() async {
+    print('Starting file traversal...');
+
+    try {
+      final projectRoot = Directory.current;
+      final outputFile = File(path.join(projectRoot.path, 'lib/script_tools/merged_code.txt'));
+
+      // Create output directory if it doesn't exist
+      await outputFile.parent.create(recursive: true);
+
+      final sink = outputFile.openWrite();
+
+      // Write header
+      await _writeHeader(sink);
+
+      // Process each target directory
+      int totalFiles = 0;
+
+      for (String dirPath in targetDirectories) {
+        final dir = Directory(path.join(projectRoot.path, dirPath));
+        if (await dir.exists()) {
+          print('Processing directory: $dirPath');
+          final fileCount = await _processDirectory(dir, sink, dirPath);
+          totalFiles += fileCount;
+        } else {
+          print('Directory not found: $dirPath');
+        }
+      }
+
+      // Write footer
+      await _writeFooter(sink, totalFiles);
+      await sink.close();
+
+      print('Completed! Total files: $totalFiles');
+      print('Output file: ${outputFile.path}');
+
+    } catch (e) {
+      print('Error occurred: $e');
+      rethrow;
+    }
+  }
+
+  /// Write file header
+  static Future<void> _writeHeader(IOSink sink) async {
+    final now = DateTime.now().toIso8601String();
+    sink.writeln('// Flutter Project Code Merge');
+    sink.writeln('// Generated: $now');
+    sink.writeln('// ==========================================================');
+    sink.writeln();
+  }
+
+  /// Write file footer
+  static Future<void> _writeFooter(IOSink sink, int totalFiles) async {
+    sink.writeln();
+    sink.writeln('// ==========================================================');
+    sink.writeln('// Total files processed: $totalFiles');
+    sink.writeln('// Generation completed: ${DateTime.now().toIso8601String()}');
+    sink.writeln('// ==========================================================');
+  }
+
+  /// Process directory
+  static Future<int> _processDirectory(
+      Directory dir,
+      IOSink sink,
+      String relativePath
+      ) async {
+    int fileCount = 0;
+
+    sink.writeln();
+    sink.writeln('// Directory: $relativePath');
+    sink.writeln('// ----------------------------------------------------------');
+
+    final files = await _getAllFiles(dir);
+
+    for (FileSystemEntity file in files) {
+      if (file is File && _shouldIncludeFile(file)) {
+        try {
+          await _processFile(file, sink, dir.path);
+          fileCount++;
+        } catch (e) {
+          print('Cannot process file ${file.path}: $e');
+          sink.writeln('// ERROR: Cannot read file: ${path.relative(file.path, from: dir.path)}');
+          sink.writeln();
+        }
+      }
+    }
+
+    return fileCount;
+  }
+
+  /// Get all files recursively
+  static Future<List<FileSystemEntity>> _getAllFiles(Directory dir) async {
+    final List<FileSystemEntity> files = [];
+
+    await for (FileSystemEntity entity in dir.list(recursive: true)) {
+      // Skip unwanted directories
+      if (entity is Directory && _shouldSkipDirectory(entity)) {
+        continue;
+      }
+
+      if (entity is File) {
+        files.add(entity);
+      }
+    }
+
+    // Sort by path
+    files.sort((a, b) => a.path.compareTo(b.path));
+    return files;
+  }
+
+  /// Process single file
+  static Future<void> _processFile(File file, IOSink sink, String basePath) async {
+    final relativePath = path.relative(file.path, from: basePath);
+
+    // Write file header
+    sink.writeln();
+    sink.writeln('// File: $relativePath');
+    sink.writeln('// ${'-' * 50}');
+
+    // Read and write file content
+    final content = await file.readAsString();
+    sink.writeln(content);
+
+    sink.writeln();
+    sink.writeln('// End of file: $relativePath');
+    sink.writeln();
+  }
+
+  /// Check if file should be included
+  static bool _shouldIncludeFile(File file) {
+    final extension = path.extension(file.path).toLowerCase();
+    return targetExtensions.contains(extension);
+  }
+
+  /// Check if directory should be skipped
+  static bool _shouldSkipDirectory(Directory dir) {
+    final dirName = path.basename(dir.path);
+    final relativePath = path.relative(dir.path, from: Directory.current.path);
+
+    // Check skip list
+    for (String skip in skipDirectories) {
+      if (dirName == skip || relativePath.contains(skip)) {
+        return true;
+      }
+    }
+
+    // Skip hidden directories
+    if (dirName.startsWith('.') && dirName != '.') {
+      return true;
+    }
+
+    return false;
+  }
+
+  /// Show simple statistics
+  static Future<void> showStats() async {
+    print('Calculating project statistics...');
+
+    final projectRoot = Directory.current;
+    int dartFiles = 0;
+    int kotlinFiles = 0;
+    int javaFiles = 0;
+    int totalLines = 0;
+
+    for (String dirPath in targetDirectories) {
+      final dir = Directory(path.join(projectRoot.path, dirPath));
+      if (await dir.exists()) {
+        final files = await _getAllFiles(dir);
+
+        for (FileSystemEntity file in files) {
+          if (file is File && _shouldIncludeFile(file)) {
+            final extension = path.extension(file.path).toLowerCase();
+            final content = await file.readAsString();
+            final lines = content.split('\n').length;
+
+            totalLines += lines;
+
+            switch (extension) {
+              case '.dart':
+                dartFiles++;
+                break;
+              case '.kt':
+                kotlinFiles++;
+                break;
+              case '.java':
+                javaFiles++;
+                break;
+            }
+          }
+        }
+      }
+    }
+
+    print('\nProject Statistics:');
+    print('Dart files: $dartFiles');
+    print('Kotlin files: $kotlinFiles');
+    print('Java files: $javaFiles');
+    print('Total files: ${dartFiles + kotlinFiles + javaFiles}');
+    print('Total lines: $totalLines');
+  }
+}
+
+// Main function
+void main(List<String> args) async {
+  if (args.isNotEmpty && args[0] == 'stats') {
+    await SimpleFileTraversal.showStats();
+  } else {
+    await SimpleFileTraversal.run();
+  }
+}
+
+// End of file: script_tools\merge_script_v2.dart
+
+
+// File: widgets\priority_selector.dart
+// --------------------------------------------------
+import 'package:flutter/material.dart';
+import '../models/task.dart';
+
+class PrioritySelector extends StatelessWidget {
+  final Priority selectedPriority;
+  final Function(Priority) onPriorityChanged;
+
+  const PrioritySelector({
+    Key? key,
+    required this.selectedPriority,
+    required this.onPriorityChanged,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Priority*',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: _PriorityOption(
+                label: 'HIGH',
+                color: Colors.red,
+                isSelected: selectedPriority == Priority.high,
+                onTap: () => onPriorityChanged(Priority.high),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _PriorityOption(
+                label: 'MEDIUM',
+                color: Colors.orange,
+                isSelected: selectedPriority == Priority.medium,
+                onTap: () => onPriorityChanged(Priority.medium),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _PriorityOption(
+                label: 'LOW',
+                color: Colors.green,
+                isSelected: selectedPriority == Priority.low,
+                onTap: () => onPriorityChanged(Priority.low),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _PriorityOption extends StatelessWidget {
+  final String label;
+  final Color color;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  const _PriorityOption({
+    Key? key,
+    required this.label,
+    required this.color,
+    required this.isSelected,
+    required this.onTap,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? color : color.withOpacity(0.2),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: color,
+            width: 2,
+          ),
+        ),
+        child: Center(
+          child: Text(
+            label,
+            style: TextStyle(
+              color: isSelected ? Colors.white : color,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
+// End of file: widgets\priority_selector.dart
+
+
+// File: widgets\task_list_item.dart
+// --------------------------------------------------
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import '../models/task.dart';
+
+class TaskListItem extends StatelessWidget {
+  final Task task;
+  final VoidCallback onTap;
+  final VoidCallback onToggleComplete;
+
+  const TaskListItem({
+    Key? key,
+    required this.task,
+    required this.onTap,
+    required this.onToggleComplete,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    Color priorityColor;
+
+    switch (task.priority) {
+      case Priority.high:
+        priorityColor = Colors.red;
+        break;
+      case Priority.medium:
+        priorityColor = Colors.orange;
+        break;
+      case Priority.low:
+        priorityColor = Colors.green;
+        break;
+    }
+
+    final isOverdue = task.dueDate != null &&
+        !task.isCompleted &&
+        task.dueDate!.isBefore(DateTime.now());
+
+    return ListTile(
+      onTap: onTap,
+      leading: Checkbox(
+        value: task.isCompleted,
+        onChanged: (_) => onToggleComplete(),
+        activeColor: theme.colorScheme.primary,
+      ),
+      title: Text(
+        task.name,
+        style: TextStyle(
+          decoration: task.isCompleted ? TextDecoration.lineThrough : null,
+          color: task.isCompleted ? theme.disabledColor : null,
+          fontWeight: task.priority == Priority.high ? FontWeight.bold : null,
+        ),
+      ),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (task.dueDate != null)
+            Text(
+              'Due: ${DateFormat('MMM d, h:mm a').format(task.dueDate!)}',
+              style: TextStyle(
+                color: isOverdue ? Colors.red : null,
+                fontWeight: isOverdue ? FontWeight.bold : null,
+              ),
+            ),
+          if (task.tags.isNotEmpty)
+            Wrap(
+              spacing: 4,
+              children: task.tags.map((tag) => Chip(
+                label: Text(tag, style: const TextStyle(fontSize: 10)),
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+              )).toList(),
+            ),
+        ],
+      ),
+      trailing: Container(
+        width: 12,
+        height: 12,
+        decoration: BoxDecoration(
+          color: priorityColor,
+          shape: BoxShape.circle,
+        ),
+      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+    );
+  }
+}
+
+// End of file: widgets\task_list_item.dart
+
+
+// Directory: android/app/src/main/kotlin/com/example/project2/
+// ----------------------------------------------------------
+
+// File: MainActivity.kt
+// --------------------------------------------------
+package com.example.project2
+
+import io.flutter.embedding.android.FlutterActivity
+
+class MainActivity: FlutterActivity()
+
+
+// End of file: MainActivity.kt
+
+
+// ==========================================================
+// Total files processed: 13
+// Generation completed: 2025-06-02T00:19:11.562139
+// ==========================================================

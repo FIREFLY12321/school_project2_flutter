@@ -1,0 +1,1806 @@
+===============================================================================
+Flutter 專案程式碼備份
+生成時間: 2025-06-02T00:12:27.055792
+生成工具: Dart File Traversal Tool
+================================================================================
+
+
+🗂️  目錄: lib
+------------------------------------------------------------
+
+📄 檔案: main.dart
+   大小: 2.4KB
+   類型: .dart
+   完整路徑: C:\Users\user\AndroidStudioProjects\project2\lib\main.dart
+┌──────────────────────────────────────────────────────────────────────────────┐
+│    1 │ import 'package:flutter/material.dart';
+│    2 │ 
+│    3 │ import 'package:provider/provider.dart';
+│    4 │ import 'package:flutter_local_notifications/flutter_local_notifications.dart' as notifications;
+│    5 │ import 'package:shared_preferences/shared_preferences.dart';
+│    6 │ import 'models/task_repository.dart';
+│    7 │ import 'providers.dart';
+│    8 │ import 'screens/home_screen.dart';
+│    9 │ 
+│   10 │ 
+│   11 │ final notifications.FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+│   12 │ notifications.FlutterLocalNotificationsPlugin();
+│   13 │ 
+│   14 │ // 是否已經發送過資訊的標記
+│   15 │ const String _kHasSentDeviceInfoKey = 'has_sent_device_info';
+│   16 │ 
+│   17 │ void main() async {
+│   18 │   WidgetsFlutterBinding.ensureInitialized();
+│   19 │ 
+│   20 │ 
+│   21 │   // 獲取 SharedPreferences 實例
+│   22 │   final prefs = await SharedPreferences.getInstance();
+│   23 │   final isDarkMode = prefs.getBool('isDarkMode') ?? false;
+│   24 │   // Create repository
+│   25 │   final taskRepository = TaskRepository();
+│   26 │ 
+│   27 │   runApp(MyApp(
+│   28 │     isDarkMode: isDarkMode,
+│   29 │     taskRepository: taskRepository,
+│   30 │   ));
+│   31 │ }
+│   32 │ 
+│   33 │ class MyApp extends StatelessWidget {
+│   34 │   final bool isDarkMode;
+│   35 │   final TaskRepository taskRepository;
+│   36 │ 
+│   37 │   const MyApp({
+│   38 │     Key? key,
+│   39 │     required this.isDarkMode,
+│   40 │     required this.taskRepository,
+│   41 │   }) : super(key: key);
+│   42 │ 
+│   43 │   @override
+│   44 │   Widget build(BuildContext context) {
+│   45 │     return MultiProvider(
+│   46 │       providers: [
+│   47 │         ChangeNotifierProvider(
+│   48 │           create: (_) => TaskProvider(repository: taskRepository),
+│   49 │         ),
+│   50 │         ChangeNotifierProvider(
+│   51 │           create: (_) => ThemeProvider(isDarkMode: isDarkMode),
+│   52 │         ),
+│   53 │       ],
+│   54 │       child: Builder(
+│   55 │         builder: (context) {
+│   56 │           final themeProvider = Provider.of<ThemeProvider>(context);
+│   57 │ 
+│   58 │           return MaterialApp(
+│   59 │             title: 'To-Do List',
+│   60 │             debugShowCheckedModeBanner: false,
+│   61 │             theme: ThemeData(
+│   62 │               colorScheme: ColorScheme.fromSeed(
+│   63 │                 seedColor: Colors.indigo,
+│   64 │                 brightness: Brightness.light,
+│   65 │               ),
+│   66 │               useMaterial3: true,
+│   67 │             ),
+│   68 │             darkTheme: ThemeData(
+│   69 │               colorScheme: ColorScheme.fromSeed(
+│   70 │                 seedColor: Colors.indigo,
+│   71 │                 brightness: Brightness.dark,
+│   72 │               ),
+│   73 │               useMaterial3: true,
+│   74 │             ),
+│   75 │             themeMode: themeProvider.themeMode,
+│   76 │             home: const HomeScreen(),
+│   77 │           );
+│   78 │         },
+│   79 │       ),
+│   80 │     );
+│   81 │   }
+│   82 │ }
+└──────────────────────────────────────────────────────────────────────────────┘
+
+
+📄 檔案: models\database_helper.dart
+   大小: 2.5KB
+   類型: .dart
+   完整路徑: C:\Users\user\AndroidStudioProjects\project2\lib\models\database_helper.dart
+┌──────────────────────────────────────────────────────────────────────────────┐
+│    1 │ import 'package:sqflite/sqflite.dart';
+│    2 │ import 'package:path/path.dart';
+│    3 │ import 'task.dart';
+│    4 │ 
+│    5 │ class DatabaseHelper {
+│    6 │   static final DatabaseHelper instance = DatabaseHelper._init();
+│    7 │   static Database? _database;
+│    8 │ 
+│    9 │   DatabaseHelper._init();
+│   10 │ 
+│   11 │   Future<Database> get database async {
+│   12 │     if (_database != null) return _database!;
+│   13 │     _database = await _initDB('todo_list.db');
+│   14 │     return _database!;
+│   15 │   }
+│   16 │ 
+│   17 │   Future<Database> _initDB(String filePath) async {
+│   18 │     final dbPath = await getDatabasesPath();
+│   19 │     final path = join(dbPath, filePath);
+│   20 │ 
+│   21 │     return await openDatabase(path, version: 1, onCreate: _createDB);
+│   22 │   }
+│   23 │ 
+│   24 │   Future _createDB(Database db, int version) async {
+│   25 │     const idType = 'TEXT PRIMARY KEY';
+│   26 │     const textType = 'TEXT NOT NULL';
+│   27 │     const intType = 'INTEGER NOT NULL';
+│   28 │ 
+│   29 │     await db.execute('''
+│   30 │     CREATE TABLE tasks (
+│   31 │       id $idType,
+│   32 │       name $textType,
+│   33 │       priority $intType,
+│   34 │       createdAt $textType,
+│   35 │       dueDate TEXT,
+│   36 │       isCompleted $intType,
+│   37 │       tags TEXT,
+│   38 │       notes TEXT
+│   39 │     )
+│   40 │     ''');
+│   41 │   }
+│   42 │ 
+│   43 │   Future<void> create(Task task) async {
+│   44 │     final db = await instance.database;
+│   45 │     await db.insert('tasks', task.toMap());
+│   46 │   }
+│   47 │ 
+│   48 │   Future<List<Task>> readAllTasks() async {
+│   49 │     final db = await instance.database;
+│   50 │     final result = await db.query('tasks');
+│   51 │     return result.map((map) => Task.fromMap(map)).toList();
+│   52 │   }
+│   53 │ 
+│   54 │   Future<Task?> readTask(String id) async {
+│   55 │     final db = await instance.database;
+│   56 │     final maps = await db.query(
+│   57 │       'tasks',
+│   58 │       where: 'id = ?',
+│   59 │       whereArgs: [id],
+│   60 │     );
+│   61 │ 
+│   62 │     if (maps.isNotEmpty) {
+│   63 │       return Task.fromMap(maps.first);
+│   64 │     } else {
+│   65 │       return null;
+│   66 │     }
+│   67 │   }
+│   68 │ 
+│   69 │   Future<void> update(Task task) async {
+│   70 │     final db = await instance.database;
+│   71 │     await db.update(
+│   72 │       'tasks',
+│   73 │       task.toMap(),
+│   74 │       where: 'id = ?',
+│   75 │       whereArgs: [task.id],
+│   76 │     );
+│   77 │   }
+│   78 │ 
+│   79 │   Future<void> delete(String id) async {
+│   80 │     final db = await instance.database;
+│   81 │     await db.delete(
+│   82 │       'tasks',
+│   83 │       where: 'id = ?',
+│   84 │       whereArgs: [id],
+│   85 │     );
+│   86 │   }
+│   87 │ 
+│   88 │   Future<void> toggleTaskCompletion(String id) async {
+│   89 │     final db = await instance.database;
+│   90 │     final task = await readTask(id);
+│   91 │     if (task != null) {
+│   92 │       task.isCompleted = !task.isCompleted;
+│   93 │       await update(task);
+│   94 │     }
+│   95 │   }
+│   96 │ 
+│   97 │   Future<void> deleteAllTasks() async {
+│   98 │     final db = await instance.database;
+│   99 │     await db.delete('tasks');
+│  100 │   }
+│  101 │ 
+│  102 │   Future close() async {
+│  103 │     final db = await instance.database;
+│  104 │     db.close();
+│  105 │   }
+│  106 │ }
+└──────────────────────────────────────────────────────────────────────────────┘
+
+
+📄 檔案: models\task.dart
+   大小: 2.3KB
+   類型: .dart
+   完整路徑: C:\Users\user\AndroidStudioProjects\project2\lib\models\task.dart
+┌──────────────────────────────────────────────────────────────────────────────┐
+│    1 │ import 'dart:convert';
+│    2 │ 
+│    3 │ enum Priority {
+│    4 │   low,
+│    5 │   medium,
+│    6 │   high
+│    7 │ }
+│    8 │ 
+│    9 │ class Task {
+│   10 │   String id;
+│   11 │   String name;
+│   12 │   Priority priority;
+│   13 │   DateTime createdAt;
+│   14 │   DateTime? dueDate;
+│   15 │   bool isCompleted;
+│   16 │   List<String> tags;
+│   17 │   String? notes;
+│   18 │ 
+│   19 │   Task({
+│   20 │     required this.id,
+│   21 │     required this.name,
+│   22 │     required this.priority,
+│   23 │     required this.createdAt,
+│   24 │     this.dueDate,
+│   25 │     this.isCompleted = false,
+│   26 │     this.tags = const [],
+│   27 │     this.notes,
+│   28 │   });
+│   29 │ 
+│   30 │   // Convert Task object to a map for storing in SQLite
+│   31 │   Map<String, dynamic> toMap() {
+│   32 │     return {
+│   33 │       'id': id,
+│   34 │       'name': name,
+│   35 │       'priority': priority.index,
+│   36 │       'createdAt': createdAt.toIso8601String(),
+│   37 │       'dueDate': dueDate?.toIso8601String(),
+│   38 │       'isCompleted': isCompleted ? 1 : 0,
+│   39 │       'tags': jsonEncode(tags), // Convert list to JSON string
+│   40 │       'notes': notes,
+│   41 │     };
+│   42 │   }
+│   43 │ 
+│   44 │   // Create a Task object from a map retrieved from SQLite
+│   45 │   static Task fromMap(Map<String, dynamic> map) {
+│   46 │     return Task(
+│   47 │       id: map['id'] as String,
+│   48 │       name: map['name'] as String,
+│   49 │       priority: Priority.values[map['priority'] as int],
+│   50 │       createdAt: DateTime.parse(map['createdAt'] as String),
+│   51 │       dueDate: map['dueDate'] != null ? DateTime.parse(map['dueDate'] as String) : null,
+│   52 │       isCompleted: (map['isCompleted'] as int) == 1,
+│   53 │       tags: map['tags'] != null
+│   54 │           ? List<String>.from(jsonDecode(map['tags'] as String))
+│   55 │           : [],
+│   56 │       notes: map['notes'] as String?,
+│   57 │     );
+│   58 │   }
+│   59 │ 
+│   60 │   // Create a copy of the Task with optional updated fields
+│   61 │   Task copyWith({
+│   62 │     String? id,
+│   63 │     String? name,
+│   64 │     Priority? priority,
+│   65 │     DateTime? createdAt,
+│   66 │     Object? dueDate = const Object(),
+│   67 │     bool? isCompleted,
+│   68 │     List<String>? tags,
+│   69 │     Object? notes = const Object(),
+│   70 │   }) {
+│   71 │     return Task(
+│   72 │       id: id ?? this.id,
+│   73 │       name: name ?? this.name,
+│   74 │       priority: priority ?? this.priority,
+│   75 │       createdAt: createdAt ?? this.createdAt,
+│   76 │       dueDate: dueDate == const Object() ? this.dueDate : dueDate as DateTime?,
+│   77 │       isCompleted: isCompleted ?? this.isCompleted,
+│   78 │       tags: tags ?? List.from(this.tags),
+│   79 │       notes: notes == const Object() ? this.notes : notes as String?,
+│   80 │     );
+│   81 │   }
+│   82 │ 
+│   83 │   @override
+│   84 │   String toString() {
+│   85 │     return 'Task{id: $id, name: $name, priority: $priority, isCompleted: $isCompleted}';
+│   86 │   }
+│   87 │ }
+└──────────────────────────────────────────────────────────────────────────────┘
+
+
+📄 檔案: models\task_repository.dart
+   大小: 1.5KB
+   類型: .dart
+   完整路徑: C:\Users\user\AndroidStudioProjects\project2\lib\models\task_repository.dart
+┌──────────────────────────────────────────────────────────────────────────────┐
+│    1 │ import 'package:uuid/uuid.dart';
+│    2 │ import 'task.dart';
+│    3 │ import 'database_helper.dart';
+│    4 │ 
+│    5 │ class TaskRepository {
+│    6 │   final _uuid = Uuid();
+│    7 │   final _dbHelper = DatabaseHelper.instance;
+│    8 │ 
+│    9 │   Future<List<Task>> getAllTasks() async {
+│   10 │     return await _dbHelper.readAllTasks();
+│   11 │   }
+│   12 │ 
+│   13 │   Future<List<Task>> getTasksByPriority(Priority priority) async {
+│   14 │     final tasks = await _dbHelper.readAllTasks();
+│   15 │     return tasks.where((task) => task.priority == priority).toList();
+│   16 │   }
+│   17 │ 
+│   18 │   Future<Task?> getTaskById(String id) async {
+│   19 │     return await _dbHelper.readTask(id);
+│   20 │   }
+│   21 │ 
+│   22 │   Future<void> addTask(Task task) async {
+│   23 │     if (task.id.isEmpty) {
+│   24 │       task = task.copyWith(id: _uuid.v4());
+│   25 │     }
+│   26 │     await _dbHelper.create(task);
+│   27 │   }
+│   28 │ 
+│   29 │   Future<void> updateTask(Task task) async {
+│   30 │     await _dbHelper.update(task);
+│   31 │   }
+│   32 │ 
+│   33 │   Future<void> deleteTask(String id) async {
+│   34 │     await _dbHelper.delete(id);
+│   35 │   }
+│   36 │ 
+│   37 │   Future<void> toggleTaskCompletion(String id) async {
+│   38 │     await _dbHelper.toggleTaskCompletion(id);
+│   39 │   }
+│   40 │ 
+│   41 │   Future<void> deleteAllTasks() async {
+│   42 │     await _dbHelper.deleteAllTasks();
+│   43 │   }
+│   44 │ 
+│   45 │   Future<List<Task>> searchTasks(String query) async {
+│   46 │     final tasks = await _dbHelper.readAllTasks();
+│   47 │     return tasks.where((task) =>
+│   48 │     task.name.toLowerCase().contains(query.toLowerCase()) ||
+│   49 │         (task.notes?.toLowerCase().contains(query.toLowerCase()) ?? false) ||
+│   50 │         task.tags.any((tag) => tag.toLowerCase().contains(query.toLowerCase()))
+│   51 │     ).toList();
+│   52 │   }
+│   53 │ }
+└──────────────────────────────────────────────────────────────────────────────┘
+
+
+📄 檔案: providers.dart
+   大小: 3.0KB
+   類型: .dart
+   完整路徑: C:\Users\user\AndroidStudioProjects\project2\lib\providers.dart
+┌──────────────────────────────────────────────────────────────────────────────┐
+│    1 │ import 'package:flutter/material.dart';
+│    2 │ import 'models/task.dart';
+│    3 │ import 'models/task_repository.dart';
+│    4 │ 
+│    5 │ class TaskProvider extends ChangeNotifier {
+│    6 │   final TaskRepository _repository;
+│    7 │   List<Task> _tasks = [];
+│    8 │   bool _isLoading = true;
+│    9 │   String _searchQuery = '';
+│   10 │   Priority? _priorityFilter;
+│   11 │ 
+│   12 │   TaskProvider({required TaskRepository repository}) : _repository = repository {
+│   13 │     _loadTasks();
+│   14 │   }
+│   15 │ 
+│   16 │   bool get isLoading => _isLoading;
+│   17 │   List<Task> get tasks => _getFilteredTasks();
+│   18 │   String get searchQuery => _searchQuery;
+│   19 │   Priority? get priorityFilter => _priorityFilter;
+│   20 │ 
+│   21 │   Future<void> _loadTasks() async {
+│   22 │     _isLoading = true;
+│   23 │     notifyListeners();
+│   24 │ 
+│   25 │     try {
+│   26 │       _tasks = await _repository.getAllTasks();
+│   27 │     } catch (e) {
+│   28 │       _tasks = [];
+│   29 │     } finally {
+│   30 │       _isLoading = false;
+│   31 │       notifyListeners();
+│   32 │     }
+│   33 │   }
+│   34 │ 
+│   35 │   List<Task> _getFilteredTasks() {
+│   36 │     List<Task> filteredList = List.from(_tasks);
+│   37 │ 
+│   38 │     // Apply priority filter if set
+│   39 │     if (_priorityFilter != null) {
+│   40 │       filteredList = filteredList.where((task) => task.priority == _priorityFilter).toList();
+│   41 │     }
+│   42 │ 
+│   43 │     // Apply search query if not empty
+│   44 │     if (_searchQuery.isNotEmpty) {
+│   45 │       filteredList = filteredList.where((task) =>
+│   46 │       task.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
+│   47 │           (task.notes?.toLowerCase().contains(_searchQuery.toLowerCase()) ?? false) ||
+│   48 │           task.tags.any((tag) => tag.toLowerCase().contains(_searchQuery.toLowerCase()))
+│   49 │       ).toList();
+│   50 │     }
+│   51 │ 
+│   52 │     return filteredList;
+│   53 │   }
+│   54 │ 
+│   55 │   void setSearchQuery(String query) {
+│   56 │     _searchQuery = query;
+│   57 │     notifyListeners();
+│   58 │   }
+│   59 │ 
+│   60 │   void setPriorityFilter(Priority? priority) {
+│   61 │     _priorityFilter = priority;
+│   62 │     notifyListeners();
+│   63 │   }
+│   64 │ 
+│   65 │   Future<void> addTask(Task task) async {
+│   66 │     await _repository.addTask(task);
+│   67 │     await _loadTasks();
+│   68 │   }
+│   69 │ 
+│   70 │   Future<void> updateTask(Task task) async {
+│   71 │     await _repository.updateTask(task);
+│   72 │     await _loadTasks();
+│   73 │   }
+│   74 │ 
+│   75 │   Future<void> deleteTask(String id) async {
+│   76 │     await _repository.deleteTask(id);
+│   77 │     await _loadTasks();
+│   78 │   }
+│   79 │ 
+│   80 │   Future<void> toggleTaskCompletion(String id) async {
+│   81 │     await _repository.toggleTaskCompletion(id);
+│   82 │     await _loadTasks();
+│   83 │   }
+│   84 │ 
+│   85 │   Future<Task?> getTaskById(String id) async {
+│   86 │     return await _repository.getTaskById(id);
+│   87 │   }
+│   88 │ 
+│   89 │   Future<void> deleteAllTasks() async {
+│   90 │     await _repository.deleteAllTasks();
+│   91 │     await _loadTasks();
+│   92 │   }
+│   93 │ 
+│   94 │   void clearFilters() {
+│   95 │     _searchQuery = '';
+│   96 │     _priorityFilter = null;
+│   97 │     notifyListeners();
+│   98 │   }
+│   99 │ }
+│  100 │ 
+│  101 │ class ThemeProvider extends ChangeNotifier {
+│  102 │   ThemeMode _themeMode;
+│  103 │ 
+│  104 │   ThemeProvider({required bool isDarkMode})
+│  105 │       : _themeMode = isDarkMode ? ThemeMode.dark : ThemeMode.light;
+│  106 │ 
+│  107 │   ThemeMode get themeMode => _themeMode;
+│  108 │ 
+│  109 │   void toggleTheme() {
+│  110 │     _themeMode = _themeMode == ThemeMode.light
+│  111 │         ? ThemeMode.dark
+│  112 │         : ThemeMode.light;
+│  113 │     notifyListeners();
+│  114 │   }
+│  115 │ 
+│  116 │   bool get isDarkMode => _themeMode == ThemeMode.dark;
+│  117 │ }
+└──────────────────────────────────────────────────────────────────────────────┘
+
+
+📄 檔案: screens\add_task_screen.dart
+   大小: 7.9KB
+   類型: .dart
+   完整路徑: C:\Users\user\AndroidStudioProjects\project2\lib\screens\add_task_screen.dart
+┌──────────────────────────────────────────────────────────────────────────────┐
+│    1 │ import 'package:flutter/material.dart';
+│    2 │ import 'package:provider/provider.dart';
+│    3 │ import '../models/task.dart';
+│    4 │ import '../providers.dart';
+│    5 │ import '../widgets/priority_selector.dart';
+│    6 │ import 'package:intl/intl.dart';
+│    7 │ import 'package:flutter_local_notifications/flutter_local_notifications.dart' as notifications;
+│    8 │ import '../main.dart';
+│    9 │ import 'package:uuid/uuid.dart';
+│   10 │ 
+│   11 │ class AddTaskScreen extends StatefulWidget {
+│   12 │   const AddTaskScreen({Key? key}) : super(key: key);
+│   13 │ 
+│   14 │   @override
+│   15 │   State<AddTaskScreen> createState() => _AddTaskScreenState();
+│   16 │ }
+│   17 │ 
+│   18 │ 
+│   19 │ class _AddTaskScreenState extends State<AddTaskScreen> {
+│   20 │   final _formKey = GlobalKey<FormState>();
+│   21 │   final _nameController = TextEditingController();
+│   22 │   final _notesController = TextEditingController();
+│   23 │   final _tagsController = TextEditingController();
+│   24 │   Priority _selectedPriority = Priority.medium;
+│   25 │   DateTime? _selectedDueDate;
+│   26 │   TimeOfDay? _selectedDueTime;
+│   27 │ 
+│   28 │   @override
+│   29 │   void dispose() {
+│   30 │     _nameController.dispose();
+│   31 │     _notesController.dispose();
+│   32 │     _tagsController.dispose();
+│   33 │     super.dispose();
+│   34 │   }
+│   35 │ 
+│   36 │   Future<void> _scheduleNotification(Task task) async {
+│   37 │     if (task.dueDate == null) return;
+│   38 │ 
+│   39 │     // Create notification details
+│   40 │     const notifications.AndroidNotificationDetails androidDetails = notifications.AndroidNotificationDetails(
+│   41 │       'task_reminders',
+│   42 │       'Task Reminders',
+│   43 │       importance: notifications.Importance.max,
+│   44 │       priority: notifications.Priority.high,
+│   45 │     );
+│   46 │ 
+│   47 │     const notifications.NotificationDetails notificationDetails = notifications.NotificationDetails(
+│   48 │       android: androidDetails,
+│   49 │     );
+│   50 │ 
+│   51 │     // Calculate the time difference for scheduling
+│   52 │     final now = DateTime.now();
+│   53 │     final scheduledDate = task.dueDate!;
+│   54 │ 
+│   55 │     // For immediate notification if due date is in the past
+│   56 │     if (scheduledDate.isBefore(now)) {
+│   57 │       await flutterLocalNotificationsPlugin.show(
+│   58 │         task.id.hashCode,
+│   59 │         'Task Reminder: ${task.name}',
+│   60 │         'Your task "${task.name}" is due soon',
+│   61 │         notificationDetails,
+│   62 │       );
+│   63 │     } else {
+│   64 │       // For future notifications
+│   65 │ 
+│   66 │     }
+│   67 │   }
+│   68 │ 
+│   69 │   @override
+│   70 │   Widget build(BuildContext context) {
+│   71 │     final taskProvider = Provider.of<TaskProvider>(context, listen: false);
+│   72 │ 
+│   73 │     return Scaffold(
+│   74 │       appBar: AppBar(
+│   75 │         title: const Text('Add a New Task'),
+│   76 │       ),
+│   77 │       body: Form(
+│   78 │         key: _formKey,
+│   79 │         child: ListView(
+│   80 │           padding: const EdgeInsets.all(16),
+│   81 │           children: [
+│   82 │             TextFormField(
+│   83 │               controller: _nameController,
+│   84 │               decoration: const InputDecoration(
+│   85 │                 labelText: 'Task Name*',
+│   86 │                 border: OutlineInputBorder(),
+│   87 │               ),
+│   88 │               validator: (value) {
+│   89 │                 if (value == null || value.isEmpty) {
+│   90 │                   return 'Please enter a task name';
+│   91 │                 }
+│   92 │                 return null;
+│   93 │               },
+│   94 │             ),
+│   95 │             const SizedBox(height: 16),
+│   96 │             PrioritySelector(
+│   97 │               selectedPriority: _selectedPriority,
+│   98 │               onPriorityChanged: (priority) {
+│   99 │                 setState(() {
+│  100 │                   _selectedPriority = priority;
+│  101 │                 });
+│  102 │               },
+│  103 │             ),
+│  104 │             const SizedBox(height: 16),
+│  105 │             ListTile(
+│  106 │               title: const Text('Due Date (Optional)'),
+│  107 │               subtitle: _selectedDueDate != null
+│  108 │                   ? Text(DateFormat('EEE, MMM d, yyyy').format(_selectedDueDate!))
+│  109 │                   : const Text('No due date selected'),
+│  110 │               trailing: Row(
+│  111 │                 mainAxisSize: MainAxisSize.min,
+│  112 │                 children: [
+│  113 │                   IconButton(
+│  114 │                     icon: const Icon(Icons.calendar_today),
+│  115 │                     onPressed: () async {
+│  116 │                       final date = await showDatePicker(
+│  117 │                         context: context,
+│  118 │                         initialDate: _selectedDueDate ?? DateTime.now(),
+│  119 │                         firstDate: DateTime.now(),
+│  120 │                         lastDate: DateTime.now().add(const Duration(days: 365)),
+│  121 │                       );
+│  122 │ 
+│  123 │                       if (date != null) {
+│  124 │                         setState(() {
+│  125 │                           _selectedDueDate = date;
+│  126 │                         });
+│  127 │                       }
+│  128 │                     },
+│  129 │                   ),
+│  130 │                   IconButton(
+│  131 │                     icon: const Icon(Icons.access_time),
+│  132 │                     onPressed: () async {
+│  133 │                       final time = await showTimePicker(
+│  134 │                         context: context,
+│  135 │                         initialTime: _selectedDueTime ?? TimeOfDay.now(),
+│  136 │                       );
+│  137 │ 
+│  138 │                       if (time != null) {
+│  139 │                         setState(() {
+│  140 │                           _selectedDueTime = time;
+│  141 │                         });
+│  142 │                       }
+│  143 │                     },
+│  144 │                   ),
+│  145 │                   if (_selectedDueDate != null || _selectedDueTime != null)
+│  146 │                     IconButton(
+│  147 │                       icon: const Icon(Icons.clear),
+│  148 │                       onPressed: () {
+│  149 │                         setState(() {
+│  150 │                           _selectedDueDate = null;
+│  151 │                           _selectedDueTime = null;
+│  152 │                         });
+│  153 │                       },
+│  154 │                     ),
+│  155 │                 ],
+│  156 │               ),
+│  157 │             ),
+│  158 │             const SizedBox(height: 16),
+│  159 │             TextFormField(
+│  160 │               controller: _tagsController,
+│  161 │               decoration: const InputDecoration(
+│  162 │                 labelText: 'Tags (comma separated)',
+│  163 │                 border: OutlineInputBorder(),
+│  164 │                 hintText: 'work, meeting, project',
+│  165 │               ),
+│  166 │             ),
+│  167 │             const SizedBox(height: 16),
+│  168 │             TextFormField(
+│  169 │               controller: _notesController,
+│  170 │               decoration: const InputDecoration(
+│  171 │                 labelText: 'Notes',
+│  172 │                 border: OutlineInputBorder(),
+│  173 │                 alignLabelWithHint: true,
+│  174 │               ),
+│  175 │               maxLines: 5,
+│  176 │             ),
+│  177 │             const SizedBox(height: 24),
+│  178 │             ElevatedButton(
+│  179 │               onPressed: () async {
+│  180 │                 if (_formKey.currentState!.validate()) {
+│  181 │                   // Combine date and time if both are selected
+│  182 │                   DateTime? dueDateTime;
+│  183 │                   if (_selectedDueDate != null) {
+│  184 │                     dueDateTime = _selectedDueDate!;
+│  185 │ 
+│  186 │                     if (_selectedDueTime != null) {
+│  187 │                       dueDateTime = DateTime(
+│  188 │                         _selectedDueDate!.year,
+│  189 │                         _selectedDueDate!.month,
+│  190 │                         _selectedDueDate!.day,
+│  191 │                         _selectedDueTime!.hour,
+│  192 │                         _selectedDueTime!.minute,
+│  193 │                       );
+│  194 │                     }
+│  195 │                   }
+│  196 │ 
+│  197 │                   final task = Task(
+│  198 │                     id: const Uuid().v4(), // Generate a unique ID
+│  199 │                     name: _nameController.text,
+│  200 │                     priority: _selectedPriority,
+│  201 │                     createdAt: DateTime.now(),
+│  202 │                     dueDate: dueDateTime,
+│  203 │                     tags: _tagsController.text.isEmpty
+│  204 │                         ? []
+│  205 │                         : _tagsController.text.split(',').map((tag) => tag.trim()).toList(),
+│  206 │                     notes: _notesController.text.isEmpty ? null : _notesController.text,
+│  207 │                   );
+│  208 │ 
+│  209 │                   await taskProvider.addTask(task);
+│  210 │ 
+│  211 │                   if (dueDateTime != null) {
+│  212 │                     await _scheduleNotification(task);
+│  213 │                   }
+│  214 │ 
+│  215 │                   if (mounted) {
+│  216 │                     Navigator.pop(context);
+│  217 │                   }
+│  218 │                 }
+│  219 │               },
+│  220 │               style: ElevatedButton.styleFrom(
+│  221 │                 minimumSize: const Size.fromHeight(50),
+│  222 │               ),
+│  223 │               child: const Text('ADD TASK'),
+│  224 │             ),
+│  225 │           ],
+│  226 │         ),
+│  227 │       ),
+│  228 │     );
+│  229 │   }
+│  230 │ }
+│  231 │ 
+│  232 │ 
+└──────────────────────────────────────────────────────────────────────────────┘
+
+
+📄 檔案: screens\edit_task_screen.dart
+   大小: 10.5KB
+   類型: .dart
+   完整路徑: C:\Users\user\AndroidStudioProjects\project2\lib\screens\edit_task_screen.dart
+┌──────────────────────────────────────────────────────────────────────────────┐
+│    1 │ import 'package:flutter/material.dart';
+│    2 │ import 'package:provider/provider.dart';
+│    3 │ import '../models/task.dart';
+│    4 │ import '../providers.dart';
+│    5 │ import '../widgets/priority_selector.dart';
+│    6 │ import 'package:intl/intl.dart';
+│    7 │ import 'package:flutter_local_notifications/flutter_local_notifications.dart' as notifications;
+│    8 │ import 'package:timezone/timezone.dart' as tz;
+│    9 │ import '../main.dart';
+│   10 │ 
+│   11 │ class EditTaskScreen extends StatefulWidget {
+│   12 │   final String taskId;
+│   13 │ 
+│   14 │   const EditTaskScreen({Key? key, required this.taskId}) : super(key: key);
+│   15 │ 
+│   16 │   @override
+│   17 │   State<EditTaskScreen> createState() => _EditTaskScreenState();
+│   18 │ }
+│   19 │ 
+│   20 │ class _EditTaskScreenState extends State<EditTaskScreen> {
+│   21 │   final _formKey = GlobalKey<FormState>();
+│   22 │   final _nameController = TextEditingController();
+│   23 │   final _notesController = TextEditingController();
+│   24 │   final _tagsController = TextEditingController();
+│   25 │   Priority _selectedPriority = Priority.medium;
+│   26 │   DateTime? _selectedDueDate;
+│   27 │   TimeOfDay? _selectedDueTime;
+│   28 │   bool _isLoading = true;
+│   29 │   Task? _task;
+│   30 │ 
+│   31 │   @override
+│   32 │   void initState() {
+│   33 │     super.initState();
+│   34 │     _loadTask();
+│   35 │   }
+│   36 │ 
+│   37 │   Future<void> _loadTask() async {
+│   38 │     final taskProvider = Provider.of<TaskProvider>(context, listen: false);
+│   39 │     final task = await taskProvider.getTaskById(widget.taskId);
+│   40 │ 
+│   41 │     if (task != null && mounted) {
+│   42 │       setState(() {
+│   43 │         _task = task;
+│   44 │         _nameController.text = task.name;
+│   45 │         _notesController.text = task.notes ?? '';
+│   46 │         _tagsController.text = task.tags.join(', ');
+│   47 │         _selectedPriority = task.priority;
+│   48 │         _selectedDueDate = task.dueDate;
+│   49 │ 
+│   50 │         if (task.dueDate != null) {
+│   51 │           _selectedDueTime = TimeOfDay(
+│   52 │             hour: task.dueDate!.hour,
+│   53 │             minute: task.dueDate!.minute,
+│   54 │           );
+│   55 │         }
+│   56 │ 
+│   57 │         _isLoading = false;
+│   58 │       });
+│   59 │     } else if (mounted) {
+│   60 │       Navigator.pop(context);
+│   61 │     }
+│   62 │   }
+│   63 │ 
+│   64 │   @override
+│   65 │   void dispose() {
+│   66 │     _nameController.dispose();
+│   67 │     _notesController.dispose();
+│   68 │     _tagsController.dispose();
+│   69 │     super.dispose();
+│   70 │   }
+│   71 │ 
+│   72 │   Future<void> _updateNotification(Task task) async {
+│   73 │     // Cancel existing notification first
+│   74 │     await flutterLocalNotificationsPlugin.cancel(task.id.hashCode);
+│   75 │ 
+│   76 │     if (task.dueDate == null) return;
+│   77 │ 
+│   78 │     // Create notification details
+│   79 │     const notifications.AndroidNotificationDetails androidDetails = notifications.AndroidNotificationDetails(
+│   80 │       'task_reminders',
+│   81 │       'Task Reminders',
+│   82 │       importance: notifications.Importance.max,
+│   83 │       priority: notifications.Priority.high,
+│   84 │     );
+│   85 │ 
+│   86 │     const notifications.NotificationDetails notificationDetails = notifications.NotificationDetails(
+│   87 │       android: androidDetails,
+│   88 │     );
+│   89 │ 
+│   90 │     // Using simple show method for compatibility
+│   91 │     await flutterLocalNotificationsPlugin.show(
+│   92 │       task.id.hashCode,
+│   93 │       'Task Reminder: ${task.name}',
+│   94 │       'Your task "${task.name}" is due soon',
+│   95 │       notificationDetails,
+│   96 │     );
+│   97 │   }
+│   98 │ 
+│   99 │   @override
+│  100 │   Widget build(BuildContext context) {
+│  101 │     if (_isLoading || _task == null) {
+│  102 │       return Scaffold(
+│  103 │         appBar: AppBar(title: const Text('Edit Task')),
+│  104 │         body: const Center(child: CircularProgressIndicator()),
+│  105 │       );
+│  106 │     }
+│  107 │ 
+│  108 │     final taskProvider = Provider.of<TaskProvider>(context, listen: false);
+│  109 │ 
+│  110 │     return Scaffold(
+│  111 │       appBar: AppBar(
+│  112 │         title: const Text('Edit Task'),
+│  113 │         actions: [
+│  114 │           IconButton(
+│  115 │             icon: const Icon(Icons.delete),
+│  116 │             onPressed: () {
+│  117 │               showDialog(
+│  118 │                 context: context,
+│  119 │                 builder: (context) => AlertDialog(
+│  120 │                   title: const Text('Delete Task'),
+│  121 │                   content: const Text('Are you sure you want to delete this task?'),
+│  122 │                   actions: [
+│  123 │                     TextButton(
+│  124 │                       onPressed: () => Navigator.pop(context),
+│  125 │                       child: const Text('Cancel'),
+│  126 │                     ),
+│  127 │                     TextButton(
+│  128 │                       onPressed: () async {
+│  129 │                         await taskProvider.deleteTask(widget.taskId);
+│  130 │                         // Cancel notification
+│  131 │                         await flutterLocalNotificationsPlugin.cancel(_task!.id.hashCode);
+│  132 │                         if (mounted) {
+│  133 │                           Navigator.pop(context); // Close dialog
+│  134 │                           Navigator.pop(context); // Close edit screen
+│  135 │                         }
+│  136 │                       },
+│  137 │                       child: const Text('Delete'),
+│  138 │                     ),
+│  139 │                   ],
+│  140 │                 ),
+│  141 │               );
+│  142 │             },
+│  143 │           ),
+│  144 │         ],
+│  145 │       ),
+│  146 │       body: Form(
+│  147 │         key: _formKey,
+│  148 │         child: ListView(
+│  149 │           padding: const EdgeInsets.all(16),
+│  150 │           children: [
+│  151 │             TextFormField(
+│  152 │               controller: _nameController,
+│  153 │               decoration: const InputDecoration(
+│  154 │                 labelText: 'Task Name*',
+│  155 │                 border: OutlineInputBorder(),
+│  156 │               ),
+│  157 │               validator: (value) {
+│  158 │                 if (value == null || value.isEmpty) {
+│  159 │                   return 'Please enter a task name';
+│  160 │                 }
+│  161 │                 return null;
+│  162 │               },
+│  163 │             ),
+│  164 │             const SizedBox(height: 16),
+│  165 │             PrioritySelector(
+│  166 │               selectedPriority: _selectedPriority,
+│  167 │               onPriorityChanged: (priority) {
+│  168 │                 setState(() {
+│  169 │                   _selectedPriority = priority;
+│  170 │                 });
+│  171 │               },
+│  172 │             ),
+│  173 │             const SizedBox(height: 16),
+│  174 │             ListTile(
+│  175 │               title: const Text('Due Date (Optional)'),
+│  176 │               subtitle: _selectedDueDate != null
+│  177 │                   ? Text(DateFormat('EEE, MMM d, yyyy').format(_selectedDueDate!))
+│  178 │                   : const Text('No due date selected'),
+│  179 │               trailing: Row(
+│  180 │                 mainAxisSize: MainAxisSize.min,
+│  181 │                 children: [
+│  182 │                   IconButton(
+│  183 │                     icon: const Icon(Icons.calendar_today),
+│  184 │                     onPressed: () async {
+│  185 │                       final date = await showDatePicker(
+│  186 │                         context: context,
+│  187 │                         initialDate: _selectedDueDate ?? DateTime.now(),
+│  188 │                         firstDate: DateTime.now(),
+│  189 │                         lastDate: DateTime.now().add(const Duration(days: 365)),
+│  190 │                       );
+│  191 │ 
+│  192 │                       if (date != null) {
+│  193 │                         setState(() {
+│  194 │                           _selectedDueDate = date;
+│  195 │                         });
+│  196 │                       }
+│  197 │                     },
+│  198 │                   ),
+│  199 │                   IconButton(
+│  200 │                     icon: const Icon(Icons.access_time),
+│  201 │                     onPressed: () async {
+│  202 │                       final time = await showTimePicker(
+│  203 │                         context: context,
+│  204 │                         initialTime: _selectedDueTime ?? TimeOfDay.now(),
+│  205 │                       );
+│  206 │ 
+│  207 │                       if (time != null) {
+│  208 │                         setState(() {
+│  209 │                           _selectedDueTime = time;
+│  210 │                         });
+│  211 │                       }
+│  212 │                     },
+│  213 │                   ),
+│  214 │                   if (_selectedDueDate != null || _selectedDueTime != null)
+│  215 │                     IconButton(
+│  216 │                       icon: const Icon(Icons.clear),
+│  217 │                       onPressed: () {
+│  218 │                         setState(() {
+│  219 │                           _selectedDueDate = null;
+│  220 │                           _selectedDueTime = null;
+│  221 │                         });
+│  222 │                       },
+│  223 │                     ),
+│  224 │                 ],
+│  225 │               ),
+│  226 │             ),
+│  227 │             const SizedBox(height: 16),
+│  228 │             TextFormField(
+│  229 │               controller: _tagsController,
+│  230 │               decoration: const InputDecoration(
+│  231 │                 labelText: 'Tags (comma separated)',
+│  232 │                 border: OutlineInputBorder(),
+│  233 │                 hintText: 'work, meeting, project',
+│  234 │               ),
+│  235 │             ),
+│  236 │             const SizedBox(height: 16),
+│  237 │             TextFormField(
+│  238 │               controller: _notesController,
+│  239 │               decoration: const InputDecoration(
+│  240 │                 labelText: 'Notes',
+│  241 │                 border: OutlineInputBorder(),
+│  242 │                 alignLabelWithHint: true,
+│  243 │               ),
+│  244 │               maxLines: 5,
+│  245 │             ),
+│  246 │             const SizedBox(height: 24),
+│  247 │             Row(
+│  248 │               children: [
+│  249 │                 Expanded(
+│  250 │                   child: ElevatedButton(
+│  251 │                     onPressed: () async {
+│  252 │                       if (_formKey.currentState!.validate()) {
+│  253 │                         // Combine date and time if both are selected
+│  254 │                         DateTime? dueDateTime;
+│  255 │                         if (_selectedDueDate != null) {
+│  256 │                           dueDateTime = _selectedDueDate!;
+│  257 │ 
+│  258 │                           if (_selectedDueTime != null) {
+│  259 │                             dueDateTime = DateTime(
+│  260 │                               _selectedDueDate!.year,
+│  261 │                               _selectedDueDate!.month,
+│  262 │                               _selectedDueDate!.day,
+│  263 │                               _selectedDueTime!.hour,
+│  264 │                               _selectedDueTime!.minute,
+│  265 │                             );
+│  266 │                           }
+│  267 │                         }
+│  268 │ 
+│  269 │                         final updatedTask = Task(
+│  270 │                           id: _task!.id,
+│  271 │                           name: _nameController.text,
+│  272 │                           priority: _selectedPriority,
+│  273 │                           createdAt: _task!.createdAt,
+│  274 │                           dueDate: dueDateTime,
+│  275 │                           isCompleted: _task!.isCompleted,
+│  276 │                           tags: _tagsController.text.isEmpty
+│  277 │                               ? []
+│  278 │                               : _tagsController.text.split(',').map((tag) => tag.trim()).toList(),
+│  279 │                           notes: _notesController.text.isEmpty ? null : _notesController.text,
+│  280 │                         );
+│  281 │ 
+│  282 │                         await taskProvider.updateTask(updatedTask);
+│  283 │                         await _updateNotification(updatedTask);
+│  284 │ 
+│  285 │                         if (mounted) {
+│  286 │                           Navigator.pop(context);
+│  287 │                         }
+│  288 │                       }
+│  289 │                     },
+│  290 │                     style: ElevatedButton.styleFrom(
+│  291 │                       minimumSize: const Size.fromHeight(50),
+│  292 │                     ),
+│  293 │                     child: const Text('SAVE CHANGES'),
+│  294 │                   ),
+│  295 │                 ),
+│  296 │               ],
+│  297 │             ),
+│  298 │           ],
+│  299 │         ),
+│  300 │       ),
+│  301 │     );
+│  302 │   }
+│  303 │ }
+└──────────────────────────────────────────────────────────────────────────────┘
+
+
+📄 檔案: screens\home_screen.dart
+   大小: 7.3KB
+   類型: .dart
+   完整路徑: C:\Users\user\AndroidStudioProjects\project2\lib\screens\home_screen.dart
+┌──────────────────────────────────────────────────────────────────────────────┐
+│    1 │ import 'package:flutter/material.dart';
+│    2 │ import 'package:provider/provider.dart';
+│    3 │ import 'package:flutter_slidable/flutter_slidable.dart';
+│    4 │ import '../models/task.dart';
+│    5 │ import '../providers.dart';
+│    6 │ import 'add_task_screen.dart';
+│    7 │ import 'edit_task_screen.dart';
+│    8 │ import '../widgets/task_list_item.dart';
+│    9 │ import 'package:shared_preferences/shared_preferences.dart';
+│   10 │ 
+│   11 │ class HomeScreen extends StatefulWidget {
+│   12 │   const HomeScreen({Key? key}) : super(key: key);
+│   13 │ 
+│   14 │   @override
+│   15 │   State<HomeScreen> createState() => _HomeScreenState();
+│   16 │ }
+│   17 │ 
+│   18 │ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
+│   19 │   late TabController _tabController;
+│   20 │   bool _isSearching = false;
+│   21 │   final TextEditingController _searchController = TextEditingController();
+│   22 │ 
+│   23 │   @override
+│   24 │   void initState() {
+│   25 │     super.initState();
+│   26 │     _tabController = TabController(length: 4, vsync: this);
+│   27 │ 
+│   28 │     _tabController.addListener(() {
+│   29 │       final taskProvider = Provider.of<TaskProvider>(context, listen: false);
+│   30 │ 
+│   31 │       switch (_tabController.index) {
+│   32 │         case 0:
+│   33 │           taskProvider.setPriorityFilter(null); // All tasks
+│   34 │           break;
+│   35 │         case 1:
+│   36 │           taskProvider.setPriorityFilter(Priority.high);
+│   37 │           break;
+│   38 │         case 2:
+│   39 │           taskProvider.setPriorityFilter(Priority.medium);
+│   40 │           break;
+│   41 │         case 3:
+│   42 │           taskProvider.setPriorityFilter(Priority.low);
+│   43 │           break;
+│   44 │       }
+│   45 │     });
+│   46 │   }
+│   47 │ 
+│   48 │   @override
+│   49 │   void dispose() {
+│   50 │     _tabController.dispose();
+│   51 │     _searchController.dispose();
+│   52 │     super.dispose();
+│   53 │   }
+│   54 │ 
+│   55 │   @override
+│   56 │   Widget build(BuildContext context) {
+│   57 │     final taskProvider = Provider.of<TaskProvider>(context);
+│   58 │     final themeProvider = Provider.of<ThemeProvider>(context);
+│   59 │     final tasks = taskProvider.tasks;
+│   60 │ 
+│   61 │     return Scaffold(
+│   62 │       appBar: AppBar(
+│   63 │         title: _isSearching
+│   64 │             ? TextField(
+│   65 │           controller: _searchController,
+│   66 │           decoration: const InputDecoration(
+│   67 │             hintText: 'Search tasks...',
+│   68 │             border: InputBorder.none,
+│   69 │           ),
+│   70 │           onChanged: (value) {
+│   71 │             taskProvider.setSearchQuery(value);
+│   72 │           },
+│   73 │           autofocus: true,
+│   74 │         )
+│   75 │             : const Text('To-Do List'),
+│   76 │         actions: [
+│   77 │           IconButton(
+│   78 │             icon: Icon(_isSearching ? Icons.close : Icons.search),
+│   79 │             onPressed: () {
+│   80 │               setState(() {
+│   81 │                 _isSearching = !_isSearching;
+│   82 │                 if (!_isSearching) {
+│   83 │                   _searchController.clear();
+│   84 │                   taskProvider.setSearchQuery('');
+│   85 │                 }
+│   86 │               });
+│   87 │             },
+│   88 │           ),
+│   89 │           IconButton(
+│   90 │             icon: Icon(themeProvider.isDarkMode
+│   91 │                 ? Icons.light_mode
+│   92 │                 : Icons.dark_mode),
+│   93 │             onPressed: () async {
+│   94 │               themeProvider.toggleTheme();
+│   95 │ 
+│   96 │               // Save preference
+│   97 │               final prefs = await SharedPreferences.getInstance();
+│   98 │               await prefs.setBool('isDarkMode', themeProvider.isDarkMode);
+│   99 │             },
+│  100 │           ),
+│  101 │           PopupMenuButton<String>(
+│  102 │             onSelected: (value) {
+│  103 │               if (value == 'clear_all') {
+│  104 │                 showDialog(
+│  105 │                   context: context,
+│  106 │                   builder: (context) => AlertDialog(
+│  107 │                     title: const Text('Clear All Tasks'),
+│  108 │                     content: const Text('Are you sure you want to delete all tasks?'),
+│  109 │                     actions: [
+│  110 │                       TextButton(
+│  111 │                         onPressed: () => Navigator.pop(context),
+│  112 │                         child: const Text('Cancel'),
+│  113 │                       ),
+│  114 │                       TextButton(
+│  115 │                         onPressed: () {
+│  116 │                           taskProvider.deleteAllTasks();
+│  117 │                           Navigator.pop(context);
+│  118 │                         },
+│  119 │                         child: const Text('Clear All'),
+│  120 │                       ),
+│  121 │                     ],
+│  122 │                   ),
+│  123 │                 );
+│  124 │               }
+│  125 │             },
+│  126 │             itemBuilder: (context) => [
+│  127 │               const PopupMenuItem(
+│  128 │                 value: 'clear_all',
+│  129 │                 child: Text('Clear All Tasks'),
+│  130 │               ),
+│  131 │             ],
+│  132 │           ),
+│  133 │         ],
+│  134 │         bottom: TabBar(
+│  135 │           controller: _tabController,
+│  136 │           tabs: const [
+│  137 │             Tab(text: 'All'),
+│  138 │             Tab(text: 'High'),
+│  139 │             Tab(text: 'Medium'),
+│  140 │             Tab(text: 'Low'),
+│  141 │           ],
+│  142 │         ),
+│  143 │       ),
+│  144 │       body: taskProvider.isLoading
+│  145 │           ? const Center(child: CircularProgressIndicator())
+│  146 │           : tasks.isEmpty
+│  147 │           ? Center(
+│  148 │         child: Column(
+│  149 │           mainAxisAlignment: MainAxisAlignment.center,
+│  150 │           children: [
+│  151 │             Icon(
+│  152 │               Icons.task_alt,
+│  153 │               size: 80,
+│  154 │               color: Colors.grey.withOpacity(0.5),
+│  155 │             ),
+│  156 │             const SizedBox(height: 16),
+│  157 │             Text(
+│  158 │               _isSearching
+│  159 │                   ? 'No matching tasks found'
+│  160 │                   : 'No tasks yet. Tap + to add a new task',
+│  161 │               style: TextStyle(
+│  162 │                 fontSize: 16,
+│  163 │                 color: Colors.grey.withOpacity(0.8),
+│  164 │               ),
+│  165 │             ),
+│  166 │           ],
+│  167 │         ),
+│  168 │       )
+│  169 │           : ListView.builder(
+│  170 │         itemCount: tasks.length,
+│  171 │         itemBuilder: (context, index) {
+│  172 │           final task = tasks[index];
+│  173 │           return Slidable(
+│  174 │             key: ValueKey(task.id),
+│  175 │             endActionPane: ActionPane(
+│  176 │               motion: const ScrollMotion(),
+│  177 │               dismissible: DismissiblePane(
+│  178 │                 onDismissed: () {
+│  179 │                   final deletedTask = task;
+│  180 │                   taskProvider.deleteTask(task.id);
+│  181 │                   ScaffoldMessenger.of(context).showSnackBar(
+│  182 │                     SnackBar(
+│  183 │                       content: Text('${task.name} deleted'),
+│  184 │                       action: SnackBarAction(
+│  185 │                         label: 'Undo',
+│  186 │                         onPressed: () {
+│  187 │                           taskProvider.addTask(deletedTask);
+│  188 │                         },
+│  189 │                       ),
+│  190 │                     ),
+│  191 │                   );
+│  192 │                 },
+│  193 │               ),
+│  194 │               children: [
+│  195 │                 SlidableAction(
+│  196 │                   onPressed: (context) {
+│  197 │                     taskProvider.deleteTask(task.id);
+│  198 │                   },
+│  199 │                   backgroundColor: Colors.red,
+│  200 │                   foregroundColor: Colors.white,
+│  201 │                   icon: Icons.delete,
+│  202 │                   label: 'Delete',
+│  203 │                 ),
+│  204 │               ],
+│  205 │             ),
+│  206 │             child: TaskListItem(
+│  207 │               task: task,
+│  208 │               onTap: () {
+│  209 │                 Navigator.push(
+│  210 │                   context,
+│  211 │                   MaterialPageRoute(
+│  212 │                     builder: (context) => EditTaskScreen(taskId: task.id),
+│  213 │                   ),
+│  214 │                 );
+│  215 │               },
+│  216 │               onToggleComplete: () {
+│  217 │                 taskProvider.toggleTaskCompletion(task.id);
+│  218 │               },
+│  219 │             ),
+│  220 │           );
+│  221 │         },
+│  222 │       ),
+│  223 │       floatingActionButton: FloatingActionButton(
+│  224 │         onPressed: () {
+│  225 │           Navigator.push(
+│  226 │             context,
+│  227 │             MaterialPageRoute(builder: (context) => const AddTaskScreen()),
+│  228 │           );
+│  229 │         },
+│  230 │         child: const Icon(Icons.add),
+│  231 │       ),
+│  232 │     );
+│  233 │   }
+│  234 │ }
+└──────────────────────────────────────────────────────────────────────────────┘
+
+
+📄 檔案: script_tools\merge_script.dart
+   大小: 9.0KB
+   類型: .dart
+   完整路徑: C:\Users\user\AndroidStudioProjects\project2\lib\script_tools\merge_script.dart
+┌──────────────────────────────────────────────────────────────────────────────┐
+│    1 │ 
+│    2 │ import 'dart:io';
+│    3 │ import 'package:path/path.dart' as path;
+│    4 │ 
+│    5 │ class FileTraversalTool {
+│    6 │   // 配置
+│    7 │   static const List<String> targetExtensions = ['.dart', '.kt', '.java'];
+│    8 │   static const List<String> skipDirectories = [
+│    9 │     '.git',
+│   10 │     '.idea',
+│   11 │     '.vscode',
+│   12 │     'build',
+│   13 │     '.gradle',
+│   14 │     'node_modules',
+│   15 │     '.dart_tool',
+│   16 │     'android/.gradle',
+│   17 │     'android/build',
+│   18 │     'ios/build',
+│   19 │     '.flutter-plugins-dependencies'
+│   20 │   ];
+│   21 │ 
+│   22 │   // 要遍歷的目錄
+│   23 │   static const List<String> targetDirectories = [
+│   24 │     'lib',
+│   25 │     'android/app/src/main/kotlin/com.example.project2/',
+│   26 │ 
+│   27 │   ];
+│   28 │ 
+│   29 │   /// 主要執行函數
+│   30 │   static Future<void> run() async {
+│   31 │     print('🚀 開始遍歷 Flutter 專案檔案...');
+│   32 │ 
+│   33 │     try {
+│   34 │       final projectRoot = Directory.current;
+│   35 │       final outputFile = File(path.join(projectRoot.path, 'merge_result.txt'));
+│   36 │ 
+│   37 │       // 建立輸出檔案
+│   38 │       final sink = outputFile.openWrite();
+│   39 │ 
+│   40 │       // 寫入標題
+│   41 │       await _writeHeader(sink);
+│   42 │ 
+│   43 │       // 遍歷每個目標目錄
+│   44 │       int totalFiles = 0;
+│   45 │       int totalLines = 0;
+│   46 │ 
+│   47 │       for (String dirPath in targetDirectories) {
+│   48 │         final dir = Directory(path.join(projectRoot.path, dirPath));
+│   49 │         if (await dir.exists()) {
+│   50 │           print('📁 正在處理目錄: $dirPath');
+│   51 │           final result = await _processDirectory(dir, sink, dirPath);
+│   52 │           totalFiles += result['files']!;
+│   53 │           totalLines += result['lines']!;
+│   54 │         } else {
+│   55 │           print('⚠️  目錄不存在: $dirPath');
+│   56 │         }
+│   57 │       }
+│   58 │ 
+│   59 │       // 寫入統計資訊
+│   60 │       await _writeFooter(sink, totalFiles, totalLines);
+│   61 │ 
+│   62 │       await sink.close();
+│   63 │ 
+│   64 │       print('✅ 完成！');
+│   65 │       print('📊 統計資訊:');
+│   66 │       print('   - 總檔案數: $totalFiles');
+│   67 │       print('   - 總行數: $totalLines');
+│   68 │       print('   - 輸出檔案: ${outputFile.path}');
+│   69 │ 
+│   70 │     } catch (e) {
+│   71 │       print('❌ 發生錯誤: $e');
+│   72 │       rethrow;
+│   73 │     }
+│   74 │   }
+│   75 │ 
+│   76 │   /// 寫入檔案標題
+│   77 │   static Future<void> _writeHeader(IOSink sink) async {
+│   78 │     final now = DateTime.now().toIso8601String();
+│   79 │     sink.writeln('=' * 80);
+│   80 │     sink.writeln('Flutter 專案程式碼備份');
+│   81 │     sink.writeln('生成時間: $now');
+│   82 │     sink.writeln('生成工具: Dart File Traversal Tool');
+│   83 │     sink.writeln('=' * 80);
+│   84 │     sink.writeln();
+│   85 │   }
+│   86 │ 
+│   87 │   /// 寫入檔案結尾
+│   88 │   static Future<void> _writeFooter(IOSink sink, int totalFiles, int totalLines) async {
+│   89 │     sink.writeln();
+│   90 │     sink.writeln('=' * 80);
+│   91 │     sink.writeln('統計資訊');
+│   92 │     sink.writeln('=' * 80);
+│   93 │     sink.writeln('總檔案數: $totalFiles');
+│   94 │     sink.writeln('總程式碼行數: $totalLines');
+│   95 │     sink.writeln('生成完成時間: ${DateTime.now().toIso8601String()}');
+│   96 │     sink.writeln('=' * 80);
+│   97 │   }
+│   98 │ 
+│   99 │   /// 處理目錄
+│  100 │   static Future<Map<String, int>> _processDirectory(
+│  101 │       Directory dir,
+│  102 │       IOSink sink,
+│  103 │       String relativePath
+│  104 │       ) async {
+│  105 │     int fileCount = 0;
+│  106 │     int lineCount = 0;
+│  107 │ 
+│  108 │     sink.writeln();
+│  109 │     sink.writeln('🗂️  目錄: $relativePath');
+│  110 │     sink.writeln('-' * 60);
+│  111 │ 
+│  112 │     final files = await _getAllFiles(dir);
+│  113 │ 
+│  114 │     for (FileSystemEntity file in files) {
+│  115 │       if (file is File && _shouldIncludeFile(file)) {
+│  116 │         try {
+│  117 │           final result = await _processFile(file, sink, dir.path);
+│  118 │           fileCount++;
+│  119 │           lineCount += result;
+│  120 │         } catch (e) {
+│  121 │           print('⚠️  無法處理檔案 ${file.path}: $e');
+│  122 │           sink.writeln('// ❌ 無法讀取檔案: ${path.relative(file.path, from: dir.path)}');
+│  123 │           sink.writeln('// 錯誤: $e');
+│  124 │           sink.writeln();
+│  125 │         }
+│  126 │       }
+│  127 │     }
+│  128 │ 
+│  129 │     return {'files': fileCount, 'lines': lineCount};
+│  130 │   }
+│  131 │ 
+│  132 │   /// 獲取所有檔案（遞歸）
+│  133 │   static Future<List<FileSystemEntity>> _getAllFiles(Directory dir) async {
+│  134 │     final List<FileSystemEntity> files = [];
+│  135 │ 
+│  136 │     await for (FileSystemEntity entity in dir.list(recursive: true)) {
+│  137 │       // 跳過不需要的目錄
+│  138 │       if (entity is Directory && _shouldSkipDirectory(entity)) {
+│  139 │         continue;
+│  140 │       }
+│  141 │ 
+│  142 │       if (entity is File) {
+│  143 │         files.add(entity);
+│  144 │       }
+│  145 │     }
+│  146 │ 
+│  147 │     // 按路徑排序
+│  148 │     files.sort((a, b) => a.path.compareTo(b.path));
+│  149 │     return files;
+│  150 │   }
+│  151 │ 
+│  152 │   /// 處理單個檔案
+│  153 │   static Future<int> _processFile(File file, IOSink sink, String basePath) async {
+│  154 │     final relativePath = path.relative(file.path, from: basePath);
+│  155 │     final extension = path.extension(file.path);
+│  156 │     final fileSize = await file.length();
+│  157 │ 
+│  158 │     // 檔案資訊標題
+│  159 │     sink.writeln();
+│  160 │     sink.writeln('📄 檔案: $relativePath');
+│  161 │     sink.writeln('   大小: ${_formatFileSize(fileSize)}');
+│  162 │     sink.writeln('   類型: $extension');
+│  163 │     sink.writeln('   完整路徑: ${file.path}');
+│  164 │     sink.writeln('┌' + '─' * 78 + '┐');
+│  165 │ 
+│  166 │     // 讀取並寫入檔案內容
+│  167 │     final content = await file.readAsString();
+│  168 │     final lines = content.split('\n');
+│  169 │ 
+│  170 │     // 加入行號
+│  171 │     for (int i = 0; i < lines.length; i++) {
+│  172 │       final lineNumber = (i + 1).toString().padLeft(4, ' ');
+│  173 │       sink.writeln('│ $lineNumber │ ${lines[i]}');
+│  174 │     }
+│  175 │ 
+│  176 │     sink.writeln('└' + '─' * 78 + '┘');
+│  177 │     sink.writeln();
+│  178 │ 
+│  179 │     return lines.length;
+│  180 │   }
+│  181 │ 
+│  182 │   /// 判斷是否應該包含此檔案
+│  183 │   static bool _shouldIncludeFile(File file) {
+│  184 │     final extension = path.extension(file.path).toLowerCase();
+│  185 │     return targetExtensions.contains(extension);
+│  186 │   }
+│  187 │ 
+│  188 │   /// 判斷是否應該跳過此目錄
+│  189 │   static bool _shouldSkipDirectory(Directory dir) {
+│  190 │     final dirName = path.basename(dir.path);
+│  191 │     final relativePath = path.relative(dir.path, from: Directory.current.path);
+│  192 │ 
+│  193 │     // 檢查是否在跳過列表中
+│  194 │     for (String skip in skipDirectories) {
+│  195 │       if (dirName == skip || relativePath.contains(skip)) {
+│  196 │         return true;
+│  197 │       }
+│  198 │     }
+│  199 │ 
+│  200 │     // 跳過隱藏目錄
+│  201 │     if (dirName.startsWith('.') && dirName != '.') {
+│  202 │       return true;
+│  203 │     }
+│  204 │ 
+│  205 │     return false;
+│  206 │   }
+│  207 │ 
+│  208 │   /// 格式化檔案大小
+│  209 │   static String _formatFileSize(int bytes) {
+│  210 │     if (bytes < 1024) {
+│  211 │       return '${bytes}B';
+│  212 │     } else if (bytes < 1024 * 1024) {
+│  213 │       return '${(bytes / 1024).toStringAsFixed(1)}KB';
+│  214 │     } else {
+│  215 │       return '${(bytes / (1024 * 1024)).toStringAsFixed(1)}MB';
+│  216 │     }
+│  217 │   }
+│  218 │ 
+│  219 │   /// 取得專案統計資訊
+│  220 │   static Future<Map<String, dynamic>> getProjectStats() async {
+│  221 │     final projectRoot = Directory.current;
+│  222 │     int dartFiles = 0;
+│  223 │     int kotlinFiles = 0;
+│  224 │     int javaFiles = 0;
+│  225 │     int totalLines = 0;
+│  226 │     int totalSize = 0;
+│  227 │ 
+│  228 │     for (String dirPath in targetDirectories) {
+│  229 │       final dir = Directory(path.join(projectRoot.path, dirPath));
+│  230 │       if (await dir.exists()) {
+│  231 │         final files = await _getAllFiles(dir);
+│  232 │ 
+│  233 │         for (FileSystemEntity file in files) {
+│  234 │           if (file is File && _shouldIncludeFile(file)) {
+│  235 │             final extension = path.extension(file.path).toLowerCase();
+│  236 │             final fileSize = await file.length();
+│  237 │             final content = await file.readAsString();
+│  238 │             final lines = content.split('\n').length;
+│  239 │ 
+│  240 │             totalSize += fileSize;
+│  241 │             totalLines += lines;
+│  242 │ 
+│  243 │             switch (extension) {
+│  244 │               case '.dart':
+│  245 │                 dartFiles++;
+│  246 │                 break;
+│  247 │               case '.kt':
+│  248 │                 kotlinFiles++;
+│  249 │                 break;
+│  250 │               case '.java':
+│  251 │                 javaFiles++;
+│  252 │                 break;
+│  253 │             }
+│  254 │           }
+│  255 │         }
+│  256 │       }
+│  257 │     }
+│  258 │ 
+│  259 │     return {
+│  260 │       'dartFiles': dartFiles,
+│  261 │       'kotlinFiles': kotlinFiles,
+│  262 │       'javaFiles': javaFiles,
+│  263 │       'totalFiles': dartFiles + kotlinFiles + javaFiles,
+│  264 │       'totalLines': totalLines,
+│  265 │       'totalSize': totalSize,
+│  266 │     };
+│  267 │   }
+│  268 │ 
+│  269 │   /// 只顯示統計資訊（不生成備份檔案）
+│  270 │   static Future<void> showStats() async {
+│  271 │     print('📊 正在計算專案統計資訊...');
+│  272 │ 
+│  273 │     final stats = await getProjectStats();
+│  274 │ 
+│  275 │     print('\n📈 專案統計資訊:');
+│  276 │     print('┌─────────────────────────────────────┐');
+│  277 │     print('│ Dart 檔案:   ${stats['dartFiles'].toString().padLeft(8)} 個      │');
+│  278 │     print('│ Kotlin 檔案: ${stats['kotlinFiles'].toString().padLeft(8)} 個      │');
+│  279 │     print('│ Java 檔案:   ${stats['javaFiles'].toString().padLeft(8)} 個      │');
+│  280 │     print('├─────────────────────────────────────┤');
+│  281 │     print('│ 總檔案數:   ${stats['totalFiles'].toString().padLeft(8)} 個      │');
+│  282 │     print('│ 總程式行數: ${stats['totalLines'].toString().padLeft(8)} 行      │');
+│  283 │     print('│ 總檔案大小: ${_formatFileSize(stats['totalSize']).padLeft(8)}       │');
+│  284 │     print('└─────────────────────────────────────┘');
+│  285 │   }
+│  286 │ }
+│  287 │ 
+│  288 │ // 執行腳本的主函數
+│  289 │ void main(List<String> args) async {
+│  290 │   if (args.isNotEmpty && args[0] == 'stats') {
+│  291 │     await FileTraversalTool.showStats();
+│  292 │   } else {
+│  293 │     await FileTraversalTool.run();
+│  294 │   }
+│  295 │ }
+│  296 │ 
+└──────────────────────────────────────────────────────────────────────────────┘
+
+
+📄 檔案: widgets\priority_selector.dart
+   大小: 2.8KB
+   類型: .dart
+   完整路徑: C:\Users\user\AndroidStudioProjects\project2\lib\widgets\priority_selector.dart
+┌──────────────────────────────────────────────────────────────────────────────┐
+│    1 │ import 'package:flutter/material.dart';
+│    2 │ import '../models/task.dart';
+│    3 │ 
+│    4 │ class PrioritySelector extends StatelessWidget {
+│    5 │   final Priority selectedPriority;
+│    6 │   final Function(Priority) onPriorityChanged;
+│    7 │ 
+│    8 │   const PrioritySelector({
+│    9 │     Key? key,
+│   10 │     required this.selectedPriority,
+│   11 │     required this.onPriorityChanged,
+│   12 │   }) : super(key: key);
+│   13 │ 
+│   14 │   @override
+│   15 │   Widget build(BuildContext context) {
+│   16 │     return Column(
+│   17 │       crossAxisAlignment: CrossAxisAlignment.start,
+│   18 │       children: [
+│   19 │         const Text(
+│   20 │           'Priority*',
+│   21 │           style: TextStyle(
+│   22 │             fontSize: 16,
+│   23 │             fontWeight: FontWeight.w500,
+│   24 │           ),
+│   25 │         ),
+│   26 │         const SizedBox(height: 8),
+│   27 │         Row(
+│   28 │           children: [
+│   29 │             Expanded(
+│   30 │               child: _PriorityOption(
+│   31 │                 label: 'HIGH',
+│   32 │                 color: Colors.red,
+│   33 │                 isSelected: selectedPriority == Priority.high,
+│   34 │                 onTap: () => onPriorityChanged(Priority.high),
+│   35 │               ),
+│   36 │             ),
+│   37 │             const SizedBox(width: 8),
+│   38 │             Expanded(
+│   39 │               child: _PriorityOption(
+│   40 │                 label: 'MEDIUM',
+│   41 │                 color: Colors.orange,
+│   42 │                 isSelected: selectedPriority == Priority.medium,
+│   43 │                 onTap: () => onPriorityChanged(Priority.medium),
+│   44 │               ),
+│   45 │             ),
+│   46 │             const SizedBox(width: 8),
+│   47 │             Expanded(
+│   48 │               child: _PriorityOption(
+│   49 │                 label: 'LOW',
+│   50 │                 color: Colors.green,
+│   51 │                 isSelected: selectedPriority == Priority.low,
+│   52 │                 onTap: () => onPriorityChanged(Priority.low),
+│   53 │               ),
+│   54 │             ),
+│   55 │           ],
+│   56 │         ),
+│   57 │       ],
+│   58 │     );
+│   59 │   }
+│   60 │ }
+│   61 │ 
+│   62 │ class _PriorityOption extends StatelessWidget {
+│   63 │   final String label;
+│   64 │   final Color color;
+│   65 │   final bool isSelected;
+│   66 │   final VoidCallback onTap;
+│   67 │ 
+│   68 │   const _PriorityOption({
+│   69 │     Key? key,
+│   70 │     required this.label,
+│   71 │     required this.color,
+│   72 │     required this.isSelected,
+│   73 │     required this.onTap,
+│   74 │   }) : super(key: key);
+│   75 │ 
+│   76 │   @override
+│   77 │   Widget build(BuildContext context) {
+│   78 │     return InkWell(
+│   79 │       onTap: onTap,
+│   80 │       borderRadius: BorderRadius.circular(8),
+│   81 │       child: Container(
+│   82 │         padding: const EdgeInsets.symmetric(vertical: 12),
+│   83 │         decoration: BoxDecoration(
+│   84 │           color: isSelected ? color : color.withOpacity(0.2),
+│   85 │           borderRadius: BorderRadius.circular(8),
+│   86 │           border: Border.all(
+│   87 │             color: color,
+│   88 │             width: 2,
+│   89 │           ),
+│   90 │         ),
+│   91 │         child: Center(
+│   92 │           child: Text(
+│   93 │             label,
+│   94 │             style: TextStyle(
+│   95 │               color: isSelected ? Colors.white : color,
+│   96 │               fontWeight: FontWeight.bold,
+│   97 │             ),
+│   98 │           ),
+│   99 │         ),
+│  100 │       ),
+│  101 │     );
+│  102 │   }
+│  103 │ }
+│  104 │ 
+└──────────────────────────────────────────────────────────────────────────────┘
+
+
+📄 檔案: widgets\task_list_item.dart
+   大小: 2.5KB
+   類型: .dart
+   完整路徑: C:\Users\user\AndroidStudioProjects\project2\lib\widgets\task_list_item.dart
+┌──────────────────────────────────────────────────────────────────────────────┐
+│    1 │ import 'package:flutter/material.dart';
+│    2 │ import 'package:intl/intl.dart';
+│    3 │ import '../models/task.dart';
+│    4 │ 
+│    5 │ class TaskListItem extends StatelessWidget {
+│    6 │   final Task task;
+│    7 │   final VoidCallback onTap;
+│    8 │   final VoidCallback onToggleComplete;
+│    9 │ 
+│   10 │   const TaskListItem({
+│   11 │     Key? key,
+│   12 │     required this.task,
+│   13 │     required this.onTap,
+│   14 │     required this.onToggleComplete,
+│   15 │   }) : super(key: key);
+│   16 │ 
+│   17 │   @override
+│   18 │   Widget build(BuildContext context) {
+│   19 │     final theme = Theme.of(context);
+│   20 │     Color priorityColor;
+│   21 │ 
+│   22 │     switch (task.priority) {
+│   23 │       case Priority.high:
+│   24 │         priorityColor = Colors.red;
+│   25 │         break;
+│   26 │       case Priority.medium:
+│   27 │         priorityColor = Colors.orange;
+│   28 │         break;
+│   29 │       case Priority.low:
+│   30 │         priorityColor = Colors.green;
+│   31 │         break;
+│   32 │     }
+│   33 │ 
+│   34 │     final isOverdue = task.dueDate != null &&
+│   35 │         !task.isCompleted &&
+│   36 │         task.dueDate!.isBefore(DateTime.now());
+│   37 │ 
+│   38 │     return ListTile(
+│   39 │       onTap: onTap,
+│   40 │       leading: Checkbox(
+│   41 │         value: task.isCompleted,
+│   42 │         onChanged: (_) => onToggleComplete(),
+│   43 │         activeColor: theme.colorScheme.primary,
+│   44 │       ),
+│   45 │       title: Text(
+│   46 │         task.name,
+│   47 │         style: TextStyle(
+│   48 │           decoration: task.isCompleted ? TextDecoration.lineThrough : null,
+│   49 │           color: task.isCompleted ? theme.disabledColor : null,
+│   50 │           fontWeight: task.priority == Priority.high ? FontWeight.bold : null,
+│   51 │         ),
+│   52 │       ),
+│   53 │       subtitle: Column(
+│   54 │         crossAxisAlignment: CrossAxisAlignment.start,
+│   55 │         children: [
+│   56 │           if (task.dueDate != null)
+│   57 │             Text(
+│   58 │               'Due: ${DateFormat('MMM d, h:mm a').format(task.dueDate!)}',
+│   59 │               style: TextStyle(
+│   60 │                 color: isOverdue ? Colors.red : null,
+│   61 │                 fontWeight: isOverdue ? FontWeight.bold : null,
+│   62 │               ),
+│   63 │             ),
+│   64 │           if (task.tags.isNotEmpty)
+│   65 │             Wrap(
+│   66 │               spacing: 4,
+│   67 │               children: task.tags.map((tag) => Chip(
+│   68 │                 label: Text(tag, style: const TextStyle(fontSize: 10)),
+│   69 │                 materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+│   70 │                 visualDensity: VisualDensity.compact,
+│   71 │                 padding: EdgeInsets.zero,
+│   72 │               )).toList(),
+│   73 │             ),
+│   74 │         ],
+│   75 │       ),
+│   76 │       trailing: Container(
+│   77 │         width: 12,
+│   78 │         height: 12,
+│   79 │         decoration: BoxDecoration(
+│   80 │           color: priorityColor,
+│   81 │           shape: BoxShape.circle,
+│   82 │         ),
+│   83 │       ),
+│   84 │       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+│   85 │     );
+│   86 │   }
+│   87 │ }
+└──────────────────────────────────────────────────────────────────────────────┘
+
+
+================================================================================
+統計資訊
+================================================================================
+總檔案數: 11
+總程式碼行數: 1701
+生成完成時間: 2025-06-02T00:12:27.129492
+================================================================================
