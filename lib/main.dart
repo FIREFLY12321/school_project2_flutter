@@ -1,82 +1,34 @@
 import 'package:flutter/material.dart';
-
-import 'package:provider/provider.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart' as notifications;
+import 'package:project2/services/notification_service.dart';
+import 'package:project2/widgets/dual_view_application.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+// 新的備忘錄系統
+import 'models/memo_repository.dart';
+
+
+// 舊的 Todo List 系統
 import 'models/task_repository.dart';
-import 'providers.dart';
+
 import 'screens/home_screen.dart';
-
-
-final notifications.FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-notifications.FlutterLocalNotificationsPlugin();
-
-// 是否已經發送過資訊的標記
-const String _kHasSentDeviceInfoKey = 'has_sent_device_info';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // 初始化通知服務
+  await NotificationService().initialize();
 
-  // 獲取 SharedPreferences 實例
+  // 獲取主題設定
   final prefs = await SharedPreferences.getInstance();
   final isDarkMode = prefs.getBool('isDarkMode') ?? false;
-  // Create repository
-  final taskRepository = TaskRepository();
 
-  runApp(MyApp(
+  // 創建兩個系統的倉庫
+  final memoRepository = MemoRepository();     // 新的備忘錄系統
+  final taskRepository = TaskRepository();     // 舊的 Todo List 系統
+
+  runApp(DualViewApp(
     isDarkMode: isDarkMode,
+    memoRepository: memoRepository,
     taskRepository: taskRepository,
   ));
-}
-
-class MyApp extends StatelessWidget {
-  final bool isDarkMode;
-  final TaskRepository taskRepository;
-
-  const MyApp({
-    Key? key,
-    required this.isDarkMode,
-    required this.taskRepository,
-  }) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return MultiProvider(
-      providers: [
-        ChangeNotifierProvider(
-          create: (_) => TaskProvider(repository: taskRepository),
-        ),
-        ChangeNotifierProvider(
-          create: (_) => ThemeProvider(isDarkMode: isDarkMode),
-        ),
-      ],
-      child: Builder(
-        builder: (context) {
-          final themeProvider = Provider.of<ThemeProvider>(context);
-
-          return MaterialApp(
-            title: 'To-Do List',
-            debugShowCheckedModeBanner: false,
-            theme: ThemeData(
-              colorScheme: ColorScheme.fromSeed(
-                seedColor: Colors.indigo,
-                brightness: Brightness.light,
-              ),
-              useMaterial3: true,
-            ),
-            darkTheme: ThemeData(
-              colorScheme: ColorScheme.fromSeed(
-                seedColor: Colors.indigo,
-                brightness: Brightness.dark,
-              ),
-              useMaterial3: true,
-            ),
-            themeMode: themeProvider.themeMode,
-            home: const HomeScreen(),
-          );
-        },
-      ),
-    );
-  }
 }

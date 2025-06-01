@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/task.dart';
-import '../providers.dart';
+import '../providers/providers.dart';
 import '../widgets/priority_selector.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart' as notifications;
 import '../main.dart';
 import 'package:uuid/uuid.dart';
+
+final notifications.FlutterLocalNotificationsPlugin _localNotifications =
+notifications.FlutterLocalNotificationsPlugin();
 
 class AddTaskScreen extends StatefulWidget {
   const AddTaskScreen({Key? key}) : super(key: key);
@@ -32,6 +35,25 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     _tagsController.dispose();
     super.dispose();
   }
+  Future<void> _initializeNotifications() async {
+    try {
+      const androidSettings = notifications.AndroidInitializationSettings('@mipmap/ic_launcher');
+      const iosSettings = notifications.DarwinInitializationSettings(
+        requestAlertPermission: true,
+        requestBadgePermission: true,
+        requestSoundPermission: true,
+      );
+
+      const initSettings = notifications.InitializationSettings(
+        android: androidSettings,
+        iOS: iosSettings,
+      );
+
+      await _localNotifications.initialize(initSettings);
+    } catch (e) {
+      print('初始化通知失敗: $e');
+    }
+  }
 
   Future<void> _scheduleNotification(Task task) async {
     if (task.dueDate == null) return;
@@ -41,11 +63,18 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       'task_reminders',
       'Task Reminders',
       importance: notifications.Importance.max,
+      channelDescription: 'Notifications for task reminders',
       priority: notifications.Priority.high,
     );
 
+    const notifications.DarwinNotificationDetails iosDetails = notifications.DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
     const notifications.NotificationDetails notificationDetails = notifications.NotificationDetails(
       android: androidDetails,
+      iOS: iosDetails,
     );
 
     // Calculate the time difference for scheduling
@@ -54,7 +83,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
 
     // For immediate notification if due date is in the past
     if (scheduledDate.isBefore(now)) {
-      await flutterLocalNotificationsPlugin.show(
+      await _localNotifications.show(
         task.id.hashCode,
         'Task Reminder: ${task.name}',
         'Your task "${task.name}" is due soon',
@@ -62,7 +91,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       );
     } else {
       // For future notifications
-
+      debugPrint("notification error");
     }
   }
 

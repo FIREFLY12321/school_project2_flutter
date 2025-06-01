@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/task.dart';
-import '../providers.dart';
+import '../providers/providers.dart';
 import '../widgets/priority_selector.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart' as notifications;
 import 'package:timezone/timezone.dart' as tz;
-import '../main.dart';
+
+// 在檔案內定義本地通知插件實例
+final notifications.FlutterLocalNotificationsPlugin _localNotifications =
+notifications.FlutterLocalNotificationsPlugin();
 
 class EditTaskScreen extends StatefulWidget {
   final String taskId;
@@ -69,31 +72,67 @@ class _EditTaskScreenState extends State<EditTaskScreen> {
     super.dispose();
   }
 
+  Future<void> _initializeNotifications() async {
+    try {
+      const androidSettings = notifications.AndroidInitializationSettings('@mipmap/ic_launcher');
+      const iosSettings = notifications.DarwinInitializationSettings(
+        requestAlertPermission: true,
+        requestBadgePermission: true,
+        requestSoundPermission: true,
+      );
+
+      const initSettings = notifications.InitializationSettings(
+        android: androidSettings,
+        iOS: iosSettings,
+      );
+
+      await _localNotifications.initialize(initSettings);
+    } catch (e) {
+      debugPrint('init notification error: $e');
+    }
+  }
+
   Future<void> _updateNotification(Task task) async {
-    // Cancel existing notification first
-    await flutterLocalNotificationsPlugin.cancel(task.id.hashCode);
+    try {
+      // 確保通知已初始化
+      await _initializeNotifications();
 
-    if (task.dueDate == null) return;
+      // 先取消舊的通知
+      await _localNotifications.cancel(task.id.hashCode);
+      await _localNotifications.cancel(task.id.hashCode + 1000);
 
-    // Create notification details
-    const notifications.AndroidNotificationDetails androidDetails = notifications.AndroidNotificationDetails(
-      'task_reminders',
-      'Task Reminders',
-      importance: notifications.Importance.max,
-      priority: notifications.Priority.high,
-    );
+      if (task.dueDate == null) return;
 
-    const notifications.NotificationDetails notificationDetails = notifications.NotificationDetails(
-      android: androidDetails,
-    );
+      // 設定新的通知
+      const androidSettings = notifications.AndroidNotificationDetails(
+        'task_reminders',
+        'Task Reminders',
+        channelDescription: 'Notifications for task reminders',
+        importance: notifications.Importance.max,
+        priority: notifications.Priority.high,
+      );
 
-    // Using simple show method for compatibility
-    await flutterLocalNotificationsPlugin.show(
-      task.id.hashCode,
-      'Task Reminder: ${task.name}',
-      'Your task "${task.name}" is due soon',
-      notificationDetails,
-    );
+      const iosSettings = notifications.DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      );
+
+      const notificationDetails = notifications.NotificationDetails(
+        android: androidSettings,
+        iOS: iosSettings,
+      );
+
+      // 顯示任務更新通知
+      await _localNotifications.show(
+        task.id.hashCode + 1000,
+        'Task Updated: ${task.name}',
+        'Task has been updated with due date ${DateFormat('MMM d, h:mm a').format(task.dueDate!)}',
+        notificationDetails,
+      );
+    } catch (e) {
+      print('更新通知時發生錯誤: $e');
+    }
   }
 
   @override
@@ -127,11 +166,19 @@ class _EditTaskScreenState extends State<EditTaskScreen> {
                     TextButton(
                       onPressed: () async {
                         await taskProvider.deleteTask(widget.taskId);
-                        // Cancel notification
-                        await flutterLocalNotificationsPlugin.cancel(_task!.id.hashCode);
+
+                        // 取消通知
+                        try {
+                          await _initializeNotifications();
+                          await _localNotifications.cancel(_task!.id.hashCode);
+                          await _localNotifications.cancel(_task!.id.hashCode + 1000);
+                        } catch (e) {
+                          print('取消通知時發生錯誤: $e');
+                        }
+
                         if (mounted) {
-                          Navigator.pop(context); // Close dialog
-                          Navigator.pop(context); // Close edit screen
+                          Navigator.pop(context); // 關閉對話框
+                          Navigator.pop(context); // 關閉編輯頁面
                         }
                       },
                       child: const Text('Delete'),
@@ -250,7 +297,7 @@ class _EditTaskScreenState extends State<EditTaskScreen> {
                   child: ElevatedButton(
                     onPressed: () async {
                       if (_formKey.currentState!.validate()) {
-                        // Combine date and time if both are selected
+                        // 組合日期和時間
                         DateTime? dueDateTime;
                         if (_selectedDueDate != null) {
                           dueDateTime = _selectedDueDate!;

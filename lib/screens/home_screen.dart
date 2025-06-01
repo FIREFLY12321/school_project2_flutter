@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import '../models/task.dart';
-import '../providers.dart';
+import '../providers/providers.dart';
 import 'add_task_screen.dart';
 import 'edit_task_screen.dart';
 import '../widgets/task_list_item.dart';
