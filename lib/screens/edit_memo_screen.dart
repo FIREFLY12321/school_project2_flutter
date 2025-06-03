@@ -279,7 +279,7 @@ class _EditMemoScreenState extends State<EditMemoScreen> {
                   // 更新通知
                   final notificationService = NotificationService();
                   if (_hasReminder) {
-                    await notificationService.showMemoCreated(updatedMemo);
+                    //await notificationService.showMemoCreated(updatedMemo);
                   } else {
                     // 如果關閉提醒，取消通知
                     await notificationService.cancelMemoNotification(updatedMemo.id);

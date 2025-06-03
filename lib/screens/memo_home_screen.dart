@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:intl/intl.dart';
@@ -8,6 +9,8 @@ import '../models/memo.dart';
 
 import '../providers/memo_providers.dart';
 import '../providers/providers.dart' as old_providers;
+import '../services/notification_service.dart';
+import '../services/system_overlay_service.dart';
 import '../tester/test_screen.dart';
 import 'add_memo_screen.dart';
 import 'edit_memo_screen.dart';
@@ -35,8 +38,8 @@ class _MemoHomeScreenState extends State<MemoHomeScreen> {
 
   String get todayTitle {
     final now = DateTime.now();
-    // 使用簡單的日期格式，避免本地化問題
-    return '${now.year}/${now.month.toString().padLeft(2, '0')}/${now.day.toString().padLeft(2, '0')} 備忘錄';
+    String formattedDate = DateFormat('yyyy-MM-dd – kk:mm').format(now);
+    return formattedDate;
   }
 
   Future<void> _openMap(String location) async {
@@ -92,6 +95,67 @@ class _MemoHomeScreenState extends State<MemoHomeScreen> {
       context,
       MaterialPageRoute(builder: (context) => const TestScreen()),
     );
+  }
+
+  Future<void> _toggleSystemOverlay() async {
+    try {
+      await SystemOverlayService.toggleOverlay();
+
+      if (mounted) {
+        final isVisible = SystemOverlayService.isOverlayVisible;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(isVisible
+                ? '🚀 系統級浮動按鈕已顯示\n可以退出 App 後在桌面上看到浮動按鈕'
+                : '系統級浮動按鈕已隱藏'),
+            duration: const Duration(seconds: 3),
+            backgroundColor: isVisible ? Colors.green : Colors.grey,
+            action: isVisible ? SnackBarAction(
+              label: '最小化 App',
+              onPressed: () {
+                // 將 App 移到背景
+                SystemNavigator.pop();
+              },
+            ) : null,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('操作失敗: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+  Future<void> _testNotification() async {
+    final success = await NotificationService().testNotification();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(success ? '✅ 測試通知已發送' : '❌ 測試通知發送失敗'),
+          backgroundColor: success ? Colors.green : Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _testScheduledNotification() async {
+    final success = await NotificationService().testScheduledNotification();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(success
+              ? '⏰ 定時測試通知已設定（1分鐘後）'
+              : '❌ 定時測試通知設定失敗'),
+          backgroundColor: success ? Colors.green : Colors.red,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
   }
 
   @override
@@ -153,12 +217,25 @@ class _MemoHomeScreenState extends State<MemoHomeScreen> {
                 case 'open_test_screen':
                   _openTestScreen();
                   break;
+                case 'toggle_system_overlay':
+                  _toggleSystemOverlay();
+                  break;
+                case 'test_notification':
+                  _testNotification();
+                  break;
+                case 'test_scheduled':
+                  _testScheduledNotification();
+                  break;
               }
             },
             itemBuilder: (context) => [
               const PopupMenuItem(
                 value: 'toggle_overlay',
-                child: Text('切換系統級浮動按鈕'),
+                child: Text('切換應用內浮動按鈕'),
+              ),
+              const PopupMenuItem(
+                value: 'toggle_system_overlay',
+                child: Text('🚀 切換系統級浮動按鈕'),
               ),
               const PopupMenuItem(
                 value: 'test_fab',
@@ -171,6 +248,14 @@ class _MemoHomeScreenState extends State<MemoHomeScreen> {
               const PopupMenuItem(
                 value: 'clear_all',
                 child: Text('清除所有備忘錄'),
+              ),
+              const PopupMenuItem(
+                value: 'test_notification',
+                child: Text('🔔 測試即時通知'),
+              ),
+              const PopupMenuItem(
+                value: 'test_scheduled',
+                child: Text('⏰ 測試定時通知'),
               ),
             ],
           ),
@@ -225,11 +310,11 @@ class _MemoHomeScreenState extends State<MemoHomeScreen> {
           endActionPane: ActionPane(
             motion: const ScrollMotion(),
             dismissible: DismissiblePane(
-              onDismissed: () => _showDeleteConfirmDialog(memo),//fixme
+              onDismissed: () => _deleteMemo(memo),
             ),
             children: [
               SlidableAction(
-                onPressed: (context) => _showDeleteConfirmDialog(memo),
+                onPressed: (context) => _deleteMemo(memo),
                 backgroundColor: Colors.red,
                 foregroundColor: Colors.white,
                 icon: Icons.delete,

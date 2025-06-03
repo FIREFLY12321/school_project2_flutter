@@ -1,5 +1,5 @@
 // Flutter Project Code Merge
-// Generated: 2025-06-02T00:19:11.513694
+// Generated: 2025-06-03T12:20:34.593364
 // ==========================================================
 
 
@@ -9,86 +9,42 @@
 // File: main.dart
 // --------------------------------------------------
 import 'package:flutter/material.dart';
-
-import 'package:provider/provider.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart' as notifications;
+import 'package:intl/date_symbol_data_file.dart';
+import 'package:project2/services/notification_service.dart';
+import 'package:project2/services/system_overlay_service.dart';
+import 'package:project2/widgets/dual_view_application.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+// 新的備忘錄系統
+import 'models/memo_repository.dart';
+
+// 舊的 Todo List 系統
 import 'models/task_repository.dart';
-import 'providers.dart';
-import 'screens/home_screen.dart';
 
-
-final notifications.FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-notifications.FlutterLocalNotificationsPlugin();
-
-// 是否已經發送過資訊的標記
-const String _kHasSentDeviceInfoKey = 'has_sent_device_info';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
 
-  // 獲取 SharedPreferences 實例
+  // 初始化通知服務
+  await NotificationService().initialize();
+
+  // 初始化系統級 Overlay 服務
+  await SystemOverlayService.initialize();
+
+  // 獲取主題設定
   final prefs = await SharedPreferences.getInstance();
   final isDarkMode = prefs.getBool('isDarkMode') ?? false;
-  // Create repository
-  final taskRepository = TaskRepository();
 
-  runApp(MyApp(
+  // 創建兩個系統的倉庫
+  final memoRepository = MemoRepository();     // 新的備忘錄系統
+  final taskRepository = TaskRepository();     // 舊的 Todo List 系統
+
+  runApp(DualViewApp(
     isDarkMode: isDarkMode,
+    memoRepository: memoRepository,
     taskRepository: taskRepository,
   ));
-}
-
-class MyApp extends StatelessWidget {
-  final bool isDarkMode;
-  final TaskRepository taskRepository;
-
-  const MyApp({
-    Key? key,
-    required this.isDarkMode,
-    required this.taskRepository,
-  }) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return MultiProvider(
-      providers: [
-        ChangeNotifierProvider(
-          create: (_) => TaskProvider(repository: taskRepository),
-        ),
-        ChangeNotifierProvider(
-          create: (_) => ThemeProvider(isDarkMode: isDarkMode),
-        ),
-      ],
-      child: Builder(
-        builder: (context) {
-          final themeProvider = Provider.of<ThemeProvider>(context);
-
-          return MaterialApp(
-            title: 'To-Do List',
-            debugShowCheckedModeBanner: false,
-            theme: ThemeData(
-              colorScheme: ColorScheme.fromSeed(
-                seedColor: Colors.indigo,
-                brightness: Brightness.light,
-              ),
-              useMaterial3: true,
-            ),
-            darkTheme: ThemeData(
-              colorScheme: ColorScheme.fromSeed(
-                seedColor: Colors.indigo,
-                brightness: Brightness.dark,
-              ),
-              useMaterial3: true,
-            ),
-            themeMode: themeProvider.themeMode,
-            home: const HomeScreen(),
-          );
-        },
-      ),
-    );
-  }
 }
 
 // End of file: main.dart
@@ -204,6 +160,275 @@ class DatabaseHelper {
 }
 
 // End of file: models\database_helper.dart
+
+
+// File: models\memo.dart
+// --------------------------------------------------
+import 'dart:convert';
+
+class Memo {
+  String id;
+  String title;
+  DateTime dateTime;
+  String? location;
+  String? description;
+  bool hasReminder;
+
+  Memo({
+    required this.id,
+    required this.title,
+    required this.dateTime,
+    this.location,
+    this.description,
+    this.hasReminder = false,
+  });
+
+  // Convert Memo object to a map for storing in SQLite
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'title': title,
+      'dateTime': dateTime.toIso8601String(),
+      'location': location,
+      'description': description,
+      'hasReminder': hasReminder ? 1 : 0,
+    };
+  }
+
+  // Create a Memo object from a map retrieved from SQLite
+  static Memo fromMap(Map<String, dynamic> map) {
+    return Memo(
+      id: map['id'] as String,
+      title: map['title'] as String,
+      dateTime: DateTime.parse(map['dateTime'] as String),
+      location: map['location'] as String?,
+      description: map['description'] as String?,
+      hasReminder: (map['hasReminder'] as int) == 1,
+    );
+  }
+
+  // Create a copy of the Memo with optional updated fields
+  Memo copyWith({
+    String? id,
+    String? title,
+    DateTime? dateTime,
+    String? location,
+    String? description,
+    bool? hasReminder,
+  }) {
+    return Memo(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      dateTime: dateTime ?? this.dateTime,
+      location: location ?? this.location,
+      description: description ?? this.description,
+      hasReminder: hasReminder ?? this.hasReminder,
+    );
+  }
+
+  // Check if memo is for today
+  bool get isToday {
+    final now = DateTime.now();
+    return dateTime.year == now.year &&
+        dateTime.month == now.month &&
+        dateTime.day == now.day;
+  }
+
+  // Format time for display
+  String get formattedTime {
+    return '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
+  }
+
+  // Format date for display
+  String get formattedDate {
+    return '${dateTime.year}/${dateTime.month.toString().padLeft(2, '0')}/${dateTime.day.toString().padLeft(2, '0')}';
+  }
+
+  @override
+  String toString() {
+    return 'Memo{id: $id, title: $title, dateTime: $dateTime, location: $location}';
+  }
+}
+
+// End of file: models\memo.dart
+
+
+// File: models\memo_database_helper.dart
+// --------------------------------------------------
+import 'package:sqflite/sqflite.dart';
+import 'package:path/path.dart';
+import 'memo.dart';
+
+class MemoDatabaseHelper {
+  static final MemoDatabaseHelper instance = MemoDatabaseHelper._init();
+  static Database? _database;
+
+  MemoDatabaseHelper._init();
+
+  Future<Database> get database async {
+    if (_database != null) return _database!;
+    _database = await _initDB('memo_calendar.db');
+    return _database!;
+  }
+
+  Future<Database> _initDB(String filePath) async {
+    final dbPath = await getDatabasesPath();
+    final path = join(dbPath, filePath);
+
+    return await openDatabase(path, version: 1, onCreate: _createDB);
+  }
+
+  Future _createDB(Database db, int version) async {
+    const idType = 'TEXT PRIMARY KEY';
+    const textType = 'TEXT NOT NULL';
+    const intType = 'INTEGER NOT NULL';
+
+    await db.execute('''
+    CREATE TABLE memos (
+      id $idType,
+      title $textType,
+      dateTime $textType,
+      location TEXT,
+      description TEXT,
+      hasReminder $intType
+    )
+    ''');
+  }
+
+  Future<void> create(Memo memo) async {
+    final db = await instance.database;
+    await db.insert('memos', memo.toMap());
+  }
+
+  Future<List<Memo>> readAllMemos() async {
+    final db = await instance.database;
+    final result = await db.query('memos', orderBy: 'dateTime ASC');
+    return result.map((map) => Memo.fromMap(map)).toList();
+  }
+
+  Future<List<Memo>> readTodayMemos() async {
+    final db = await instance.database;
+    final today = DateTime.now();
+    final startOfDay = DateTime(today.year, today.month, today.day);
+    final endOfDay = startOfDay.add(const Duration(days: 1));
+
+    final result = await db.query(
+      'memos',
+      where: 'dateTime >= ? AND dateTime < ?',
+      whereArgs: [startOfDay.toIso8601String(), endOfDay.toIso8601String()],
+      orderBy: 'dateTime ASC',
+    );
+
+    return result.map((map) => Memo.fromMap(map)).toList();
+  }
+
+  Future<Memo?> readMemo(String id) async {
+    final db = await instance.database;
+    final maps = await db.query(
+      'memos',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+
+    if (maps.isNotEmpty) {
+      return Memo.fromMap(maps.first);
+    } else {
+      return null;
+    }
+  }
+
+  Future<void> update(Memo memo) async {
+    final db = await instance.database;
+    await db.update(
+      'memos',
+      memo.toMap(),
+      where: 'id = ?',
+      whereArgs: [memo.id],
+    );
+  }
+
+  Future<void> delete(String id) async {
+    final db = await instance.database;
+    await db.delete(
+      'memos',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<void> deleteAllMemos() async {
+    final db = await instance.database;
+    await db.delete('memos');
+  }
+
+  Future<List<Memo>> searchMemos(String query) async {
+    final db = await instance.database;
+    final result = await db.query(
+      'memos',
+      where: 'title LIKE ? OR description LIKE ? OR location LIKE ?',
+      whereArgs: ['%$query%', '%$query%', '%$query%'],
+      orderBy: 'dateTime ASC',
+    );
+
+    return result.map((map) => Memo.fromMap(map)).toList();
+  }
+
+  Future close() async {
+    final db = await instance.database;
+    db.close();
+  }
+}
+
+// End of file: models\memo_database_helper.dart
+
+
+// File: models\memo_repository.dart
+// --------------------------------------------------
+import 'package:uuid/uuid.dart';
+import 'memo.dart';
+import 'memo_database_helper.dart';
+
+class MemoRepository {
+  final _uuid = Uuid();
+  final _dbHelper = MemoDatabaseHelper.instance;
+
+  Future<List<Memo>> getAllMemos() async {
+    return await _dbHelper.readAllMemos();
+  }
+
+  Future<List<Memo>> getTodayMemos() async {
+    return await _dbHelper.readTodayMemos();
+  }
+
+  Future<Memo?> getMemoById(String id) async {
+    return await _dbHelper.readMemo(id);
+  }
+
+  Future<void> addMemo(Memo memo) async {
+    if (memo.id.isEmpty) {
+      memo = memo.copyWith(id: _uuid.v4());
+    }
+    await _dbHelper.create(memo);
+  }
+
+  Future<void> updateMemo(Memo memo) async {
+    await _dbHelper.update(memo);
+  }
+
+  Future<void> deleteMemo(String id) async {
+    await _dbHelper.delete(id);
+  }
+
+  Future<void> deleteAllMemos() async {
+    await _dbHelper.deleteAllMemos();
+  }
+
+  Future<List<Memo>> searchMemos(String query) async {
+    return await _dbHelper.searchMemos(query);
+  }
+}
+
+// End of file: models\memo_repository.dart
 
 
 // File: models\task.dart
@@ -358,11 +583,97 @@ class TaskRepository {
 // End of file: models\task_repository.dart
 
 
-// File: providers.dart
+// File: providers\memo_providers.dart
 // --------------------------------------------------
 import 'package:flutter/material.dart';
-import 'models/task.dart';
-import 'models/task_repository.dart';
+import 'package:project2/models/memo_repository.dart';
+import 'package:project2/models/memo.dart';
+class MemoProvider extends ChangeNotifier {
+  final MemoRepository _repository;
+  List<Memo> _allMemos = [];
+  List<Memo> _todayMemos = [];
+  bool _isLoading = true;
+  String _searchQuery = '';
+
+  MemoProvider({required MemoRepository repository}) : _repository = repository {
+    _loadMemos();
+  }
+
+  bool get isLoading => _isLoading;
+  List<Memo> get allMemos => _allMemos;
+  List<Memo> get todayMemos => _todayMemos;
+  String get searchQuery => _searchQuery;
+
+  List<Memo> get displayMemos {
+    if (_searchQuery.isNotEmpty) {
+      return _allMemos.where((memo) =>
+      memo.title.toLowerCase().contains(_searchQuery.toLowerCase()) ||
+          (memo.description?.toLowerCase().contains(_searchQuery.toLowerCase()) ?? false) ||
+          (memo.location?.toLowerCase().contains(_searchQuery.toLowerCase()) ?? false)
+      ).toList();
+    }
+    return _todayMemos;
+  }
+
+  Future<void> _loadMemos() async {
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      _allMemos = await _repository.getAllMemos();
+      _todayMemos = await _repository.getTodayMemos();
+    } catch (e) {
+      _allMemos = [];
+      _todayMemos = [];
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  void setSearchQuery(String query) {
+    _searchQuery = query;
+    notifyListeners();
+  }
+
+  Future<void> addMemo(Memo memo) async {
+    await _repository.addMemo(memo);
+    await _loadMemos();
+  }
+
+  Future<void> updateMemo(Memo memo) async {
+    await _repository.updateMemo(memo);
+    await _loadMemos();
+  }
+
+  Future<void> deleteMemo(String id) async {
+    await _repository.deleteMemo(id);
+    await _loadMemos();
+  }
+
+  Future<Memo?> getMemoById(String id) async {
+    return await _repository.getMemoById(id);
+  }
+
+  Future<void> deleteAllMemos() async {
+    await _repository.deleteAllMemos();
+    await _loadMemos();
+  }
+
+  void clearSearch() {
+    _searchQuery = '';
+    notifyListeners();
+  }
+}
+
+// End of file: providers\memo_providers.dart
+
+
+// File: providers\providers.dart
+// --------------------------------------------------
+import 'package:flutter/material.dart';
+import '../models/task.dart';
+import '../models/task_repository.dart';
 
 class TaskProvider extends ChangeNotifier {
   final TaskRepository _repository;
@@ -478,7 +789,321 @@ class ThemeProvider extends ChangeNotifier {
   bool get isDarkMode => _themeMode == ThemeMode.dark;
 }
 
-// End of file: providers.dart
+// End of file: providers\providers.dart
+
+
+// File: screens\add_memo_screen.dart
+// --------------------------------------------------
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:intl/intl.dart';
+import 'package:uuid/uuid.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart' as notifications;
+
+import 'package:project2/models/memo.dart';
+import 'package:project2/providers/memo_providers.dart';
+import 'package:project2/services/notification_service.dart';
+
+class AddMemoScreen extends StatefulWidget {
+  const AddMemoScreen({Key? key}) : super(key: key);
+
+  @override
+  State<AddMemoScreen> createState() => _AddMemoScreenState();
+}
+
+class _AddMemoScreenState extends State<AddMemoScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _titleController = TextEditingController();
+  final _locationController = TextEditingController();
+  final _descriptionController = TextEditingController();
+  final _timeController = TextEditingController();
+
+  late DateTime _selectedDate;
+  TimeOfDay? _selectedTime;
+  bool _hasReminder = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // 日期固定為今天且不可改
+    _selectedDate = DateTime.now();
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _locationController.dispose();
+    _descriptionController.dispose();
+    _timeController.dispose();
+    super.dispose();
+  }
+
+  String? _validateTime(String? value) {
+    if (value == null || value.isEmpty) {
+      return '請輸入時間';
+    }
+
+    // 檢查時間格式 HH:mm
+    final timeRegex = RegExp(r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$');
+    if (!timeRegex.hasMatch(value)) {
+      return '時間格式錯誤，請使用 HH:mm 格式 (例如: 14:30)';
+    }
+
+    final parts = value.split(':');
+    final hour = int.parse(parts[0]);
+    final minute = int.parse(parts[1]);
+
+    if (hour < 0 || hour > 23) {
+      return '小時必須在 00-23 之間';
+    }
+
+    if (minute < 0 || minute > 59) {
+      return '分鐘必須在 00-59 之間';
+    }
+
+    return null;
+  }
+
+  Future<void> _selectTime() async {
+    final time = await showTimePicker(
+      context: context,
+      initialTime: _selectedTime ?? TimeOfDay.now(),
+      builder: (context, child) {
+        return MediaQuery(
+          data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: true),
+          child: child!,
+        );
+      },
+    );
+
+    if (time != null) {
+      setState(() {
+        _selectedTime = time;
+        _timeController.text = '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+      });
+    }
+  }
+
+  Future<void> _scheduleNotification(Memo memo) async {
+    if (!memo.hasReminder) return;
+
+    final notificationService = NotificationService();
+
+    // 顯示建立確認通知
+    await notificationService.showMemoCreated(memo);
+
+    // 如果時間是未來時間，也可以在這裡設置定時提醒
+    // 注意：這裡只是即時通知，真正的定時通知需要更複雜的實作
+    if (memo.dateTime.isAfter(DateTime.now())) {
+      print('備忘錄已設定提醒：${memo.title} at ${memo.formattedTime}');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final memoProvider = Provider.of<MemoProvider>(context, listen: false);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('新增備忘錄'),
+        elevation: 2,
+      ),
+      body: Form(
+        key: _formKey,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            // 日期顯示 (不可編輯)
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.calendar_today, color: Colors.blue),
+                title: const Text('日期'),
+                subtitle: Text(
+                  '${_selectedDate.year}年${_selectedDate.month}月${_selectedDate.day}日',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                trailing: const Text(
+                  '(今天)',
+                  style: TextStyle(color: Colors.blue),
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // 時間輸入
+            TextFormField(
+              controller: _timeController,
+              decoration: InputDecoration(
+                labelText: '時間*',
+                hintText: '例如: 14:30',
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.access_time),
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.schedule),
+                  onPressed: _selectTime,
+                ),
+              ),
+              validator: _validateTime,
+              keyboardType: TextInputType.datetime,
+            ),
+
+            const SizedBox(height: 16),
+
+            // 標題輸入
+            TextFormField(
+              controller: _titleController,
+              decoration: const InputDecoration(
+                labelText: '標題*',
+                hintText: '請輸入備忘錄標題',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.title),
+              ),
+              validator: (value) {
+                if (value == null || value.trim().isEmpty) {
+                  return '請輸入標題';
+                }
+                return null;
+              },
+              maxLength: 100,
+            ),
+
+            const SizedBox(height: 16),
+
+            // 地點輸入
+            TextFormField(
+              controller: _locationController,
+              decoration: const InputDecoration(
+                labelText: '地點',
+                hintText: '請輸入地點 (選填)',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.location_on),
+              ),
+              maxLength: 100,
+            ),
+
+            const SizedBox(height: 16),
+
+            // 說明輸入
+            TextFormField(
+              controller: _descriptionController,
+              decoration: const InputDecoration(
+                labelText: '說明',
+                hintText: '請輸入詳細說明 (選填)',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.description),
+                alignLabelWithHint: true,
+              ),
+              maxLines: 4,
+              maxLength: 500,
+            ),
+
+            const SizedBox(height: 16),
+
+            // 提醒設定
+            Card(
+              child: SwitchListTile(
+                title: const Text('設定提醒'),
+                subtitle: const Text('時間到時會收到通知'),
+                value: _hasReminder,
+                onChanged: (value) {
+                  setState(() {
+                    _hasReminder = value;
+                  });
+                },
+                secondary: const Icon(Icons.notifications),
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
+            // 儲存按鈕
+            ElevatedButton(
+              onPressed: () async {
+                if (_formKey.currentState!.validate()) {
+                  // 解析時間
+                  final timeParts = _timeController.text.split(':');
+                  final hour = int.parse(timeParts[0]);
+                  final minute = int.parse(timeParts[1]);
+
+                  final memoDateTime = DateTime(
+                    _selectedDate.year,
+                    _selectedDate.month,
+                    _selectedDate.day,
+                    hour,
+                    minute,
+                  );
+
+                  final memo = Memo(
+                    id: const Uuid().v4(),
+                    title: _titleController.text.trim(),
+                    dateTime: memoDateTime,
+                    location: _locationController.text.trim().isEmpty
+                        ? null
+                        : _locationController.text.trim(),
+                    description: _descriptionController.text.trim().isEmpty
+                        ? null
+                        : _descriptionController.text.trim(),
+                    hasReminder: _hasReminder,
+                  );
+
+                  await memoProvider.addMemo(memo);
+
+                  if (_hasReminder) {
+                    await _scheduleNotification(memo);
+                  }
+
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('備忘錄已新增'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                    Navigator.pop(context);
+                  }
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                minimumSize: const Size.fromHeight(50),
+                backgroundColor: Colors.blue,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text(
+                '儲存',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // 提示文字
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.blue.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.blue.withOpacity(0.3)),
+              ),
+              child: const Text(
+                '💡 提示：\n'
+                    '• 日期固定為今天，無法修改\n'
+                    '• 時間格式為 24 小時制 (例如: 14:30)\n'
+                    '• 如果有填寫地點，可以在主頁面點擊地點查看地圖',
+                style: TextStyle(fontSize: 12, color: Colors.blue),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// End of file: screens\add_memo_screen.dart
 
 
 // File: screens\add_task_screen.dart
@@ -486,12 +1111,15 @@ class ThemeProvider extends ChangeNotifier {
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/task.dart';
-import '../providers.dart';
+import '../providers/providers.dart';
 import '../widgets/priority_selector.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart' as notifications;
 import '../main.dart';
 import 'package:uuid/uuid.dart';
+
+final notifications.FlutterLocalNotificationsPlugin _localNotifications =
+notifications.FlutterLocalNotificationsPlugin();
 
 class AddTaskScreen extends StatefulWidget {
   const AddTaskScreen({Key? key}) : super(key: key);
@@ -517,6 +1145,25 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     _tagsController.dispose();
     super.dispose();
   }
+  Future<void> _initializeNotifications() async {
+    try {
+      const androidSettings = notifications.AndroidInitializationSettings('@mipmap/ic_launcher');
+      const iosSettings = notifications.DarwinInitializationSettings(
+        requestAlertPermission: true,
+        requestBadgePermission: true,
+        requestSoundPermission: true,
+      );
+
+      const initSettings = notifications.InitializationSettings(
+        android: androidSettings,
+        iOS: iosSettings,
+      );
+
+      await _localNotifications.initialize(initSettings);
+    } catch (e) {
+      print('初始化通知失敗: $e');
+    }
+  }
 
   Future<void> _scheduleNotification(Task task) async {
     if (task.dueDate == null) return;
@@ -526,11 +1173,18 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       'task_reminders',
       'Task Reminders',
       importance: notifications.Importance.max,
+      channelDescription: 'Notifications for task reminders',
       priority: notifications.Priority.high,
     );
 
+    const notifications.DarwinNotificationDetails iosDetails = notifications.DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
     const notifications.NotificationDetails notificationDetails = notifications.NotificationDetails(
       android: androidDetails,
+      iOS: iosDetails,
     );
 
     // Calculate the time difference for scheduling
@@ -539,7 +1193,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
 
     // For immediate notification if due date is in the past
     if (scheduledDate.isBefore(now)) {
-      await flutterLocalNotificationsPlugin.show(
+      await _localNotifications.show(
         task.id.hashCode,
         'Task Reminder: ${task.name}',
         'Your task "${task.name}" is due soon',
@@ -547,7 +1201,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       );
     } else {
       // For future notifications
-
+      debugPrint("notification error");
     }
   }
 
@@ -719,17 +1373,629 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
 // End of file: screens\add_task_screen.dart
 
 
+// File: screens\dual_view_screen.dart
+// --------------------------------------------------
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../providers/providers.dart' as old_providers;
+import 'home_screen.dart';
+import 'memo_home_screen.dart';
+
+class DualViewScreen extends StatefulWidget {
+  const DualViewScreen({Key? key}) : super(key: key);
+
+  @override
+  State<DualViewScreen> createState() => _DualViewScreenState();
+}
+
+class _DualViewScreenState extends State<DualViewScreen>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+  late PageController _pageController;
+  int _currentIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+    _pageController = PageController();
+
+    _tabController.addListener(() {
+      if (_tabController.indexIsChanging) {
+        _pageController.animateToPage(
+          _tabController.index,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeInOut,
+        );
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  void _onPageChanged(int index) {
+    setState(() {
+      _currentIndex = index;
+    });
+    _tabController.animateTo(index);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final themeProvider = Provider.of<old_providers.ThemeProvider>(context);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(_currentIndex == 0 ? 'Memo' : 'Todo List'),
+        backgroundColor: _currentIndex == 0 ? Colors.blue : Colors.indigo,
+        foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: Icon(themeProvider.isDarkMode
+                ? Icons.light_mode
+                : Icons.dark_mode),
+            onPressed: () async {
+              themeProvider.toggleTheme();
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setBool('isDarkMode', themeProvider.isDarkMode);
+            },
+          ),
+          PopupMenuButton<String>(
+            onSelected: (value) {
+              switch (value) {
+                case 'about':
+                  _showAboutDialog();
+                  break;
+                case 'switch_view':
+                  _switchToOtherView();
+                  break;
+              }
+            },
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                value: 'switch_view',
+                child: Row(
+                  children: [
+                    Icon(_currentIndex == 0 ? Icons.task_alt : Icons.event_note),
+                    const SizedBox(width: 8),
+                    Text(_currentIndex == 0 ? 'switch to Todo List' : 'switch to Memo'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'about',
+                child: Row(
+                  children: [
+                    Icon(Icons.info),
+                    SizedBox(width: 8),
+                    Text('關於'),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+        bottom: TabBar(
+          controller: _tabController,
+          indicatorColor: Colors.white,
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white70,
+          tabs: const [
+            Tab(
+              icon: Icon(Icons.event_note),
+              text: '備忘錄',
+            ),
+            Tab(
+              icon: Icon(Icons.task_alt),
+              text: 'Todo List',
+            ),
+          ],
+        ),
+      ),
+      body: PageView(
+        controller: _pageController,
+        onPageChanged: _onPageChanged,
+        children: const [
+          // 左側：新的備忘錄系統
+          MemoHomeScreen(),
+          // 右側：舊的 Todo List 系統
+          HomeScreen(),
+        ],
+      ),
+      // 根據當前頁面顯示不同的指示器
+      bottomNavigationBar: Container(
+        height: 60,
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: _currentIndex == 0
+                ? [Colors.blue.shade400, Colors.blue.shade600]
+                : [Colors.indigo.shade400, Colors.indigo.shade600],
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // 頁面指示器
+            Row(
+              children: List.generate(2, (index) {
+                return Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 4),
+                  width: _currentIndex == index ? 24 : 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: _currentIndex == index
+                        ? Colors.white
+                        : Colors.white54,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                );
+              }),
+            ),
+            const SizedBox(width: 16),
+            // 當前頁面說明
+            Text(
+              _currentIndex == 0 ? '滑動切換到 Todo List →' : '← 滑動切換到備忘錄',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _switchToOtherView() {
+    final targetIndex = _currentIndex == 0 ? 1 : 0;
+    _pageController.animateToPage(
+      targetIndex,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+    );
+  }
+
+  void _showAboutDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('關於此 App'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '�️ 備忘錄 & Todo List',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            ),
+            const SizedBox(height: 8),
+            const Text('這是一個結合兩種管理系統的應用程式：'),
+            const SizedBox(height: 8),
+            const Text('� 左側：行事曆備忘錄'),
+            const Text('  • 時間導向的備忘錄系統'),
+            const Text('  • 支援地點和地圖功能'),
+            const Text('  • 專注於當日行程'),
+            const SizedBox(height: 8),
+            const Text('✅ 右側：Todo List'),
+            const Text('  • 任務導向的管理系統'),
+            const Text('  • 支援優先級分類'),
+            const Text('  • 完整的任務管理'),
+            const SizedBox(height: 8),
+            const Text('� 使用方式：'),
+            const Text('  • 左右滑動切換系統'),
+            const Text('  • 點擊標籤頁切換'),
+            const Text('  • 各系統獨立運作'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('確定'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// End of file: screens\dual_view_screen.dart
+
+
+// File: screens\edit_memo_screen.dart
+// --------------------------------------------------
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:intl/intl.dart';
+
+import 'package:project2/models/memo.dart';
+import 'package:project2/providers/memo_providers.dart';
+
+import 'package:project2/services/notification_service.dart';
+
+
+class EditMemoScreen extends StatefulWidget {
+  final String memoId;
+
+  const EditMemoScreen({Key? key, required this.memoId}) : super(key: key);
+
+  @override
+  State<EditMemoScreen> createState() => _EditMemoScreenState();
+}
+
+class _EditMemoScreenState extends State<EditMemoScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _titleController = TextEditingController();
+  final _locationController = TextEditingController();
+  final _descriptionController = TextEditingController();
+  final _timeController = TextEditingController();
+
+  bool _isLoading = true;
+  Memo? _memo;
+  TimeOfDay? _selectedTime;
+  bool _hasReminder = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMemo();
+  }
+
+  Future<void> _loadMemo() async {
+    final memoProvider = Provider.of<MemoProvider>(context, listen: false);
+    final memo = await memoProvider.getMemoById(widget.memoId);
+
+    if (memo != null && mounted) {
+      setState(() {
+        _memo = memo;
+        _titleController.text = memo.title;
+        _locationController.text = memo.location ?? '';
+        _descriptionController.text = memo.description ?? '';
+        _timeController.text = memo.formattedTime;
+        _selectedTime = TimeOfDay(
+          hour: memo.dateTime.hour,
+          minute: memo.dateTime.minute,
+        );
+        _hasReminder = memo.hasReminder;
+        _isLoading = false;
+      });
+    } else if (mounted) {
+      Navigator.pop(context);
+    }
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _locationController.dispose();
+    _descriptionController.dispose();
+    _timeController.dispose();
+    super.dispose();
+  }
+
+  String? _validateTime(String? value) {
+    if (value == null || value.isEmpty) {
+      return '請輸入時間';
+    }
+
+    final timeRegex = RegExp(r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$');
+    if (!timeRegex.hasMatch(value)) {
+      return '時間格式錯誤，請使用 HH:mm 格式 (例如: 14:30)';
+    }
+
+    final parts = value.split(':');
+    final hour = int.parse(parts[0]);
+    final minute = int.parse(parts[1]);
+
+    if (hour < 0 || hour > 23) {
+      return '小時必須在 00-23 之間';
+    }
+
+    if (minute < 0 || minute > 59) {
+      return '分鐘必須在 00-59 之間';
+    }
+
+    return null;
+  }
+
+  Future<void> _selectTime() async {
+    final time = await showTimePicker(
+      context: context,
+      initialTime: _selectedTime ?? TimeOfDay.now(),
+      builder: (context, child) {
+        return MediaQuery(
+          data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: true),
+          child: child!,
+        );
+      },
+    );
+
+    if (time != null) {
+      setState(() {
+        _selectedTime = time;
+        _timeController.text = '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading || _memo == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('編輯備忘錄')),
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    final memoProvider = Provider.of<MemoProvider>(context, listen: false);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('編輯備忘錄'),
+        elevation: 2,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.delete, color: Colors.red),
+            onPressed: _showDeleteDialog,
+          ),
+        ],
+      ),
+      body: Form(
+        key: _formKey,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            // 日期顯示 (不可編輯)
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.calendar_today, color: Colors.blue),
+                title: const Text('日期'),
+                subtitle: Text(
+                  '${_memo!.dateTime.year}年${_memo!.dateTime.month}月${_memo!.dateTime.day}日',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                trailing: Text(
+                  _memo!.isToday ? '(今天)' : '',
+                  style: const TextStyle(color: Colors.blue),
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // 時間輸入
+            TextFormField(
+              controller: _timeController,
+              decoration: InputDecoration(
+                labelText: '時間*',
+                hintText: '例如: 14:30',
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.access_time),
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.schedule),
+                  onPressed: _selectTime,
+                ),
+              ),
+              validator: _validateTime,
+              keyboardType: TextInputType.datetime,
+            ),
+
+            const SizedBox(height: 16),
+
+            // 標題輸入
+            TextFormField(
+              controller: _titleController,
+              decoration: const InputDecoration(
+                labelText: '標題*',
+                hintText: '請輸入備忘錄標題',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.title),
+              ),
+              validator: (value) {
+                if (value == null || value.trim().isEmpty) {
+                  return '請輸入標題';
+                }
+                return null;
+              },
+              maxLength: 100,
+            ),
+
+            const SizedBox(height: 16),
+
+            // 地點輸入
+            TextFormField(
+              controller: _locationController,
+              decoration: const InputDecoration(
+                labelText: '地點',
+                hintText: '請輸入地點 (選填)',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.location_on),
+              ),
+              maxLength: 100,
+            ),
+
+            const SizedBox(height: 16),
+
+            // 說明輸入
+            TextFormField(
+              controller: _descriptionController,
+              decoration: const InputDecoration(
+                labelText: '說明',
+                hintText: '請輸入詳細說明 (選填)',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.description),
+                alignLabelWithHint: true,
+              ),
+              maxLines: 4,
+              maxLength: 500,
+            ),
+
+            const SizedBox(height: 16),
+
+            // 提醒設定
+            Card(
+              child: SwitchListTile(
+                title: const Text('設定提醒'),
+                subtitle: const Text('時間到時會收到通知'),
+                value: _hasReminder,
+                onChanged: (value) {
+                  setState(() {
+                    _hasReminder = value;
+                  });
+                },
+                secondary: const Icon(Icons.notifications),
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
+            // 儲存變更按鈕
+            ElevatedButton(
+              onPressed: () async {
+                if (_formKey.currentState!.validate()) {
+                  final timeParts = _timeController.text.split(':');
+                  final hour = int.parse(timeParts[0]);
+                  final minute = int.parse(timeParts[1]);
+
+                  final updatedDateTime = DateTime(
+                    _memo!.dateTime.year,
+                    _memo!.dateTime.month,
+                    _memo!.dateTime.day,
+                    hour,
+                    minute,
+                  );
+
+                  final updatedMemo = _memo!.copyWith(
+                    title: _titleController.text.trim(),
+                    dateTime: updatedDateTime,
+                    location: _locationController.text.trim().isEmpty
+                        ? null
+                        : _locationController.text.trim(),
+                    description: _descriptionController.text.trim().isEmpty
+                        ? null
+                        : _descriptionController.text.trim(),
+                    hasReminder: _hasReminder,
+                  );
+
+                  await memoProvider.updateMemo(updatedMemo);
+
+                  // 更新通知
+                  final notificationService = NotificationService();
+                  if (_hasReminder) {
+                    await notificationService.showMemoCreated(updatedMemo);
+                  } else {
+                    // 如果關閉提醒，取消通知
+                    await notificationService.cancelMemoNotification(updatedMemo.id);
+                  }
+
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('備忘錄已更新'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                    Navigator.pop(context);
+                  }
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                minimumSize: const Size.fromHeight(50),
+                backgroundColor: Colors.blue,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text(
+                '儲存變更',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // 刪除按鈕
+            OutlinedButton(
+              onPressed: _showDeleteDialog,
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size.fromHeight(50),
+                foregroundColor: Colors.red,
+                side: const BorderSide(color: Colors.red),
+              ),
+              child: const Text(
+                '刪除備忘錄',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showDeleteDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('確認刪除'),
+        content: Text('確定要刪除備忘錄「${_memo!.title}」嗎？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () async {
+              final memoProvider = Provider.of<MemoProvider>(context, listen: false);
+              await memoProvider.deleteMemo(widget.memoId);
+
+              // 取消通知
+              final notificationService = NotificationService();
+              await notificationService.cancelMemoNotification(_memo!.id);
+
+              if (mounted) {
+                Navigator.pop(context); // 關閉對話框
+                Navigator.pop(context); // 關閉編輯頁面
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('備忘錄已刪除'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
+            child: const Text('刪除', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// End of file: screens\edit_memo_screen.dart
+
+
 // File: screens\edit_task_screen.dart
 // --------------------------------------------------
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/task.dart';
-import '../providers.dart';
+import '../providers/providers.dart';
 import '../widgets/priority_selector.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart' as notifications;
 import 'package:timezone/timezone.dart' as tz;
-import '../main.dart';
+
+// 在檔案內定義本地通知插件實例
+final notifications.FlutterLocalNotificationsPlugin _localNotifications =
+notifications.FlutterLocalNotificationsPlugin();
 
 class EditTaskScreen extends StatefulWidget {
   final String taskId;
@@ -792,31 +2058,67 @@ class _EditTaskScreenState extends State<EditTaskScreen> {
     super.dispose();
   }
 
+  Future<void> _initializeNotifications() async {
+    try {
+      const androidSettings = notifications.AndroidInitializationSettings('@mipmap/ic_launcher');
+      const iosSettings = notifications.DarwinInitializationSettings(
+        requestAlertPermission: true,
+        requestBadgePermission: true,
+        requestSoundPermission: true,
+      );
+
+      const initSettings = notifications.InitializationSettings(
+        android: androidSettings,
+        iOS: iosSettings,
+      );
+
+      await _localNotifications.initialize(initSettings);
+    } catch (e) {
+      debugPrint('init notification error: $e');
+    }
+  }
+
   Future<void> _updateNotification(Task task) async {
-    // Cancel existing notification first
-    await flutterLocalNotificationsPlugin.cancel(task.id.hashCode);
+    try {
+      // 確保通知已初始化
+      await _initializeNotifications();
 
-    if (task.dueDate == null) return;
+      // 先取消舊的通知
+      await _localNotifications.cancel(task.id.hashCode);
+      await _localNotifications.cancel(task.id.hashCode + 1000);
 
-    // Create notification details
-    const notifications.AndroidNotificationDetails androidDetails = notifications.AndroidNotificationDetails(
-      'task_reminders',
-      'Task Reminders',
-      importance: notifications.Importance.max,
-      priority: notifications.Priority.high,
-    );
+      if (task.dueDate == null) return;
 
-    const notifications.NotificationDetails notificationDetails = notifications.NotificationDetails(
-      android: androidDetails,
-    );
+      // 設定新的通知
+      const androidSettings = notifications.AndroidNotificationDetails(
+        'task_reminders',
+        'Task Reminders',
+        channelDescription: 'Notifications for task reminders',
+        importance: notifications.Importance.max,
+        priority: notifications.Priority.high,
+      );
 
-    // Using simple show method for compatibility
-    await flutterLocalNotificationsPlugin.show(
-      task.id.hashCode,
-      'Task Reminder: ${task.name}',
-      'Your task "${task.name}" is due soon',
-      notificationDetails,
-    );
+      const iosSettings = notifications.DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      );
+
+      const notificationDetails = notifications.NotificationDetails(
+        android: androidSettings,
+        iOS: iosSettings,
+      );
+
+      // 顯示任務更新通知
+      await _localNotifications.show(
+        task.id.hashCode + 1000,
+        'Task Updated: ${task.name}',
+        'Task has been updated with due date ${DateFormat('MMM d, h:mm a').format(task.dueDate!)}',
+        notificationDetails,
+      );
+    } catch (e) {
+      print('更新通知時發生錯誤: $e');
+    }
   }
 
   @override
@@ -850,11 +2152,19 @@ class _EditTaskScreenState extends State<EditTaskScreen> {
                     TextButton(
                       onPressed: () async {
                         await taskProvider.deleteTask(widget.taskId);
-                        // Cancel notification
-                        await flutterLocalNotificationsPlugin.cancel(_task!.id.hashCode);
+
+                        // 取消通知
+                        try {
+                          await _initializeNotifications();
+                          await _localNotifications.cancel(_task!.id.hashCode);
+                          await _localNotifications.cancel(_task!.id.hashCode + 1000);
+                        } catch (e) {
+                          print('取消通知時發生錯誤: $e');
+                        }
+
                         if (mounted) {
-                          Navigator.pop(context); // Close dialog
-                          Navigator.pop(context); // Close edit screen
+                          Navigator.pop(context); // 關閉對話框
+                          Navigator.pop(context); // 關閉編輯頁面
                         }
                       },
                       child: const Text('Delete'),
@@ -973,7 +2283,7 @@ class _EditTaskScreenState extends State<EditTaskScreen> {
                   child: ElevatedButton(
                     onPressed: () async {
                       if (_formKey.currentState!.validate()) {
-                        // Combine date and time if both are selected
+                        // 組合日期和時間
                         DateTime? dueDateTime;
                         if (_selectedDueDate != null) {
                           dueDateTime = _selectedDueDate!;
@@ -1034,7 +2344,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import '../models/task.dart';
-import '../providers.dart';
+import '../providers/providers.dart';
 import 'add_task_screen.dart';
 import 'edit_task_screen.dart';
 import '../widgets/task_list_item.dart';
@@ -1266,6 +2576,455 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 }
 
 // End of file: screens\home_screen.dart
+
+
+// File: screens\memo_home_screen.dart
+// --------------------------------------------------
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
+import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../models/memo.dart';
+
+import '../providers/memo_providers.dart';
+import '../providers/providers.dart' as old_providers;
+import '../services/system_overlay_service.dart';
+import '../tester/test_screen.dart';
+import 'add_memo_screen.dart';
+import 'edit_memo_screen.dart';
+import '../services/overlay_service.dart';
+
+
+class MemoHomeScreen extends StatefulWidget {
+  const MemoHomeScreen({Key? key}) : super(key: key);
+
+  @override
+  State<MemoHomeScreen> createState() => _MemoHomeScreenState();
+}
+
+class _MemoHomeScreenState extends State<MemoHomeScreen> {
+  bool _isSearching = false;
+  final TextEditingController _searchController = TextEditingController();
+  bool _showOverlayFAB = false;
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    OverlayService.hideOverlay();
+    super.dispose();
+  }
+
+  String get todayTitle {
+    final now = DateTime.now();
+    String formattedDate = DateFormat('yyyy-MM-dd – kk:mm').format(now);
+    return formattedDate;
+  }
+
+  Future<void> _openMap(String location) async {
+    final encodedLocation = Uri.encodeComponent(location);
+    final googleMapsUrl = Uri.parse('https://www.google.com/maps/search/?api=1&query=$encodedLocation');
+    final appleMapsUrl = Uri.parse('http://maps.apple.com/?q=$encodedLocation');
+
+    try {
+      // 嘗試打開Google Maps
+      if (await canLaunchUrl(googleMapsUrl)) {
+        await launchUrl(googleMapsUrl, mode: LaunchMode.externalApplication);
+      } else if (await canLaunchUrl(appleMapsUrl)) {
+        await launchUrl(appleMapsUrl, mode: LaunchMode.externalApplication);
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('無法打開地圖應用')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('打開地圖時發生錯誤: $e')),
+        );
+      }
+    }
+  }
+
+  void _showTestDialog() {
+    final isVisible = OverlayService.testFloatingButtonVisibility();
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('浮動按鈕測試'),
+        content: Text(
+            isVisible
+                ? '✅ 浮動按鈕目前可見'
+                : '❌ 浮動按鈕目前不可見'
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('確定'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _openTestScreen() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const TestScreen()),
+    );
+  }
+
+  Future<void> _toggleSystemOverlay() async {
+    try {
+      await SystemOverlayService.toggleOverlay();
+
+      if (mounted) {
+        final isVisible = SystemOverlayService.isOverlayVisible;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(isVisible
+                ? '🚀 系統級浮動按鈕已顯示\n可以退出 App 後在桌面上看到浮動按鈕'
+                : '系統級浮動按鈕已隱藏'),
+            duration: const Duration(seconds: 3),
+            backgroundColor: isVisible ? Colors.green : Colors.grey,
+            action: isVisible ? SnackBarAction(
+              label: '最小化 App',
+              onPressed: () {
+                // 將 App 移到背景
+                SystemNavigator.pop();
+              },
+            ) : null,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('操作失敗: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final memoProvider = Provider.of<MemoProvider>(context);
+    final themeProvider = Provider.of<old_providers.ThemeProvider>(context); // 使用舊的 ThemeProvider
+    final memos = memoProvider.displayMemos;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: _isSearching
+            ? TextField(
+          controller: _searchController,
+          decoration: const InputDecoration(
+            hintText: '搜尋備忘錄...',
+            border: InputBorder.none,
+          ),
+          onChanged: (value) {
+            memoProvider.setSearchQuery(value);
+          },
+          autofocus: true,
+        )
+            : Text(todayTitle),
+        actions: [
+          IconButton(
+            icon: Icon(_isSearching ? Icons.close : Icons.search),
+            onPressed: () {
+              setState(() {
+                _isSearching = !_isSearching;
+                if (!_isSearching) {
+                  _searchController.clear();
+                  memoProvider.clearSearch();
+                }
+              });
+            },
+          ),
+          IconButton(
+            icon: Icon(themeProvider.isDarkMode
+                ? Icons.light_mode
+                : Icons.dark_mode),
+            onPressed: () async {
+              themeProvider.toggleTheme();
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setBool('isDarkMode', themeProvider.isDarkMode);
+            },
+          ),
+          PopupMenuButton<String>(
+            onSelected: (value) {
+              switch (value) {
+                case 'clear_all':
+                  _showClearAllDialog();
+                  break;
+                case 'toggle_overlay':
+                  _toggleOverlayFAB();
+                  break;
+                case 'test_fab':
+                  _showTestDialog();
+                  break;
+                case 'open_test_screen':
+                  _openTestScreen();
+                  break;
+                case 'toggle_system_overlay':
+                  _toggleSystemOverlay();
+                  break;
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'toggle_overlay',
+                child: Text('切換應用內浮動按鈕'),
+              ),
+              const PopupMenuItem(
+                value: 'toggle_system_overlay',
+                child: Text('🚀 切換系統級浮動按鈕'),
+              ),
+              const PopupMenuItem(
+                value: 'test_fab',
+                child: Text('測試浮動按鈕'),
+              ),
+              const PopupMenuItem(
+                value: 'open_test_screen',
+                child: Text('打開測試頁面'),
+              ),
+              const PopupMenuItem(
+                value: 'clear_all',
+                child: Text('清除所有備忘錄'),
+              ),
+            ],
+          ),
+        ],
+      ),
+      body: memoProvider.isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : memos.isEmpty
+          ? _buildEmptyState()
+          : _buildMemoList(memos),
+      floatingActionButton: !_showOverlayFAB ? FloatingActionButton(
+        onPressed: _navigateToAddMemo,
+        child: const Icon(Icons.add),
+      ) : null,
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.event_note,
+            size: 80,
+            color: Colors.grey.withOpacity(0.5),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            _isSearching
+                ? '沒有找到符合的備忘錄'
+                : '今天還沒有備忘錄\n點擊 + 新增備忘錄',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 16,
+              color: Colors.grey.withOpacity(0.8),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMemoList(List<Memo> memos) {
+    return ListView.builder(
+      padding: const EdgeInsets.all(8),
+      itemCount: memos.length,
+      itemBuilder: (context, index) {
+        final memo = memos[index];
+        return Slidable(
+          key: ValueKey(memo.id),
+          endActionPane: ActionPane(
+            motion: const ScrollMotion(),
+            dismissible: DismissiblePane(
+              onDismissed: () => _deleteMemo(memo),
+            ),
+            children: [
+              SlidableAction(
+                onPressed: (context) => _deleteMemo(memo),
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+                icon: Icons.delete,
+                label: '刪除',
+              ),
+            ],
+          ),
+          child: _buildMemoCard(memo),
+        );
+      },
+    );
+  }
+
+  Widget _buildMemoCard(Memo memo) {
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+      child: ListTile(
+        onTap: () => _navigateToEditMemo(memo.id),
+        leading: CircleAvatar(
+          backgroundColor: memo.isToday ? Colors.blue : Colors.grey,
+          child: Text(
+            memo.formattedTime.substring(0, 2), // 顯示小時
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+        title: Text(
+          memo.title,
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('時間: ${memo.formattedTime}'),
+            if (memo.location != null && memo.location!.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              GestureDetector(
+                onTap: () => _openMap(memo.location!),
+                child: Row(
+                  children: [
+                    const Icon(Icons.location_on, size: 16, color: Colors.blue),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        memo.location!,
+                        style: const TextStyle(
+                          color: Colors.blue,
+                          decoration: TextDecoration.underline,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            if (memo.description != null && memo.description!.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                memo.description!,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: Colors.grey[600]),
+              ),
+            ],
+          ],
+        ),
+        trailing: IconButton(
+          icon: const Icon(Icons.delete_outline, color: Colors.red),
+          onPressed: () => _showDeleteConfirmDialog(memo),
+        ),
+      ),
+    );
+  }
+
+  void _navigateToAddMemo() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const AddMemoScreen()),
+    );
+  }
+
+  void _navigateToEditMemo(String memoId) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => EditMemoScreen(memoId: memoId),
+      ),
+    );
+  }
+
+  void _toggleOverlayFAB() {
+    setState(() {
+      _showOverlayFAB = !_showOverlayFAB;
+    });
+
+    if (_showOverlayFAB) {
+      OverlayService.showOverlay(context, _navigateToAddMemo);
+    } else {
+      OverlayService.hideOverlay();
+    }
+  }
+
+  void _deleteMemo(Memo memo) {
+    final memoProvider = Provider.of<MemoProvider>(context, listen: false);
+    memoProvider.deleteMemo(memo.id);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('${memo.title} 已刪除'),
+        action: SnackBarAction(
+          label: '復原',
+          onPressed: () {
+            memoProvider.addMemo(memo);
+          },
+        ),
+      ),
+    );
+  }
+
+  void _showDeleteConfirmDialog(Memo memo) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('確認刪除'),
+        content: Text('確定要刪除備忘錄「${memo.title}」嗎？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _deleteMemo(memo);
+            },
+            child: const Text('刪除', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showClearAllDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('清除所有備忘錄'),
+        content: const Text('確定要刪除所有備忘錄嗎？此操作無法復原。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Provider.of<MemoProvider>(context, listen: false).deleteAllMemos();
+            },
+            child: const Text('清除全部', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// End of file: screens\memo_home_screen.dart
 
 
 // File: script_tools\merge_script.dart
@@ -1805,6 +3564,1452 @@ void main(List<String> args) async {
 // End of file: script_tools\merge_script_v2.dart
 
 
+// File: services\notification_service.dart
+// --------------------------------------------------
+import 'package:flutter_local_notifications/flutter_local_notifications.dart' as notifications;
+import '../models/memo.dart';
+
+class NotificationService {
+  static final NotificationService _instance = NotificationService._internal();
+  factory NotificationService() => _instance;
+  NotificationService._internal();
+
+  final notifications.FlutterLocalNotificationsPlugin _localNotifications =
+  notifications.FlutterLocalNotificationsPlugin();
+
+  bool _isInitialized = false;
+
+  /// 初始化通知服務
+  Future<void> initialize() async {
+    if (_isInitialized) return;
+
+    try {
+      const androidSettings = notifications.AndroidInitializationSettings('@mipmap/ic_launcher');
+      const iosSettings = notifications.DarwinInitializationSettings(
+        requestAlertPermission: true,
+        requestBadgePermission: true,
+        requestSoundPermission: true,
+      );
+
+      const initSettings = notifications.InitializationSettings(
+        android: androidSettings,
+        iOS: iosSettings,
+      );
+
+      await _localNotifications.initialize(
+        initSettings,
+        onDidReceiveNotificationResponse: _onNotificationTapped,
+      );
+
+      _isInitialized = true;
+      print('通知服務初始化成功');
+    } catch (e) {
+      print('通知服務初始化失敗: $e');
+    }
+  }
+
+  /// 處理通知點擊事件
+  void _onNotificationTapped(notifications.NotificationResponse response) {
+    print('通知被點擊: ${response.payload}');
+    // 可以在這裡添加導航邏輯
+  }
+
+  /// 顯示備忘錄提醒通知
+  Future<void> showMemoReminder(Memo memo) async {
+    if (!_isInitialized) {
+      await initialize();
+    }
+
+    try {
+      const androidDetails = notifications.AndroidNotificationDetails(
+        'memo_reminders',
+        'Memo Reminders',
+        channelDescription: 'Notifications for memo reminders',
+        importance: notifications.Importance.max,
+        priority: notifications.Priority.high,
+        showWhen: true,
+        icon: '@mipmap/ic_launcher',
+      );
+
+      const iosDetails = notifications.DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+        badgeNumber: 1,
+      );
+
+      const notificationDetails = notifications.NotificationDetails(
+        android: androidDetails,
+        iOS: iosDetails,
+      );
+
+      final title = '備忘錄提醒: ${memo.title}';
+      final body = _buildNotificationBody(memo);
+
+      await _localNotifications.show(
+        memo.id.hashCode,
+        title,
+        body,
+        notificationDetails,
+        payload: memo.id,
+      );
+    } catch (e) {
+      print('顯示通知時發生錯誤: $e');
+    }
+  }
+
+  /// 顯示備忘錄建立確認通知
+  Future<void> showMemoCreated(Memo memo) async {
+    if (!_isInitialized) {
+      await initialize();
+    }
+
+    try {
+      const androidDetails = notifications.AndroidNotificationDetails(
+        'memo_created',
+        'Memo Created',
+        channelDescription: 'Notifications when memo is created',
+        importance: notifications.Importance.defaultImportance,
+        priority: notifications.Priority.defaultPriority,
+        icon: '@mipmap/ic_launcher',
+      );
+
+      const iosDetails = notifications.DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: false,
+        presentSound: false,
+      );
+
+      const notificationDetails = notifications.NotificationDetails(
+        android: androidDetails,
+        iOS: iosDetails,
+      );
+
+      final title = memo.hasReminder ? '備忘錄提醒已設定' : '備忘錄已建立';
+      final body = memo.hasReminder
+          ? '將在 ${memo.formattedTime} 提醒您：${memo.title}'
+          : '備忘錄「${memo.title}」已成功建立';
+
+      await _localNotifications.show(
+        memo.id.hashCode + 1000, // 避免與提醒通知衝突
+        title,
+        body,
+        notificationDetails,
+        payload: memo.id,
+      );
+    } catch (e) {
+      print('顯示建立通知時發生錯誤: $e');
+    }
+  }
+
+  /// 取消指定備忘錄的通知
+  Future<void> cancelMemoNotification(String memoId) async {
+    try {
+      final notificationId = memoId.hashCode;
+      await _localNotifications.cancel(notificationId);
+      await _localNotifications.cancel(notificationId + 1000); // 取消建立通知
+    } catch (e) {
+      print('取消通知時發生錯誤: $e');
+    }
+  }
+
+  /// 取消所有通知
+  Future<void> cancelAllNotifications() async {
+    try {
+      await _localNotifications.cancelAll();
+    } catch (e) {
+      print('取消所有通知時發生錯誤: $e');
+    }
+  }
+
+  /// 檢查通知權限
+  Future<bool> checkPermissions() async {
+    if (!_isInitialized) {
+      await initialize();
+    }
+
+    try {
+      final result = await _localNotifications
+          .resolvePlatformSpecificImplementation<
+          notifications.AndroidFlutterLocalNotificationsPlugin>()
+          ?.areNotificationsEnabled();
+      return result ?? true; // iOS 預設為 true
+    } catch (e) {
+      print('檢查通知權限時發生錯誤: $e');
+      return false;
+    }
+  }
+
+  /// 請求通知權限 (主要用於 Android 13+)
+  Future<bool> requestPermissions() async {
+    if (!_isInitialized) {
+      await initialize();
+    }
+
+    try {
+      final androidImplementation = _localNotifications
+          .resolvePlatformSpecificImplementation<
+          notifications.AndroidFlutterLocalNotificationsPlugin>();
+
+      if (androidImplementation != null) {
+        final granted = await androidImplementation.requestNotificationsPermission();
+        return granted ?? false;
+      }
+      return true; // iOS 在初始化時已請求權限
+    } catch (e) {
+      print('請求通知權限時發生錯誤: $e');
+      return false;
+    }
+  }
+
+  /// 建立通知內容
+  String _buildNotificationBody(Memo memo) {
+    final parts = <String>[];
+
+    parts.add('時間：${memo.formattedTime}');
+
+    if (memo.location != null && memo.location!.isNotEmpty) {
+      parts.add('地點：${memo.location}');
+    }
+
+    if (memo.description != null && memo.description!.isNotEmpty) {
+      // 限制描述長度
+      final description = memo.description!.length > 50
+          ? '${memo.description!.substring(0, 50)}...'
+          : memo.description!;
+      parts.add('說明：$description');
+    }
+
+    return parts.join('\n');
+  }
+
+  /// 獲取所有待處理的通知
+  Future<List<notifications.PendingNotificationRequest>> getPendingNotifications() async {
+    try {
+      return await _localNotifications.pendingNotificationRequests();
+    } catch (e) {
+      print('獲取待處理通知時發生錯誤: $e');
+      return [];
+    }
+  }
+
+  /// 測試通知功能
+  Future<void> testNotification() async {
+    if (!_isInitialized) {
+      await initialize();
+    }
+
+    const androidDetails = notifications.AndroidNotificationDetails(
+      'test_channel',
+      'Test Notifications',
+      channelDescription: 'Test notification channel',
+      importance: notifications.Importance.max,
+      priority: notifications.Priority.high,
+    );
+
+    const iosDetails = notifications.DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+
+    const notificationDetails = notifications.NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
+
+    await _localNotifications.show(
+      999999,
+      '� 測試通知',
+      '這是一個測試通知，確認通知功能正常運作',
+      notificationDetails,
+    );
+  }
+}
+
+// End of file: services\notification_service.dart
+
+
+// File: services\overlay_service.dart
+// --------------------------------------------------
+import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+class OverlayService {
+  static OverlayEntry? _overlayEntry;
+  static bool _isVisible = false;
+  static const MethodChannel _channel = MethodChannel('overlay_channel');
+
+  static bool get isVisible => _isVisible;
+
+  static void showOverlay(BuildContext context, VoidCallback onPressed) {
+    if (_overlayEntry != null) return;
+
+    _overlayEntry = OverlayEntry(
+      builder: (context) => SystemOverlayFAB(
+        onPressed: onPressed,
+        onClose: hideOverlay,
+      ),
+    );
+
+    Overlay.of(context).insert(_overlayEntry!);
+    _isVisible = true;
+  }
+
+  static void hideOverlay() {
+    _overlayEntry?.remove();
+    _overlayEntry = null;
+    _isVisible = false;
+  }
+
+  static void toggleOverlay(BuildContext context, VoidCallback onPressed) {
+    if (_isVisible) {
+      hideOverlay();
+    } else {
+      showOverlay(context, onPressed);
+    }
+  }
+
+  // 測試浮動按鈕是否可見的功能
+  static bool testFloatingButtonVisibility() {
+    return _isVisible;
+  }
+}
+
+class SystemOverlayFAB extends StatefulWidget {
+  final VoidCallback onPressed;
+  final VoidCallback onClose;
+
+  const SystemOverlayFAB({
+    Key? key,
+    required this.onPressed,
+    required this.onClose,
+  }) : super(key: key);
+
+  @override
+  State<SystemOverlayFAB> createState() => _SystemOverlayFABState();
+}
+
+class _SystemOverlayFABState extends State<SystemOverlayFAB>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _animationController;
+  late Animation<double> _scaleAnimation;
+  Offset _position = const Offset(300, 500);
+  bool _isDragging = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 200),
+      vsync: this,
+    );
+    _scaleAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.elasticOut,
+    ));
+
+    _animationController.forward();
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final screenSize = MediaQuery.of(context).size;
+
+    return Positioned(
+      left: _position.dx,
+      top: _position.dy,
+      child: GestureDetector(
+        onPanStart: (details) {
+          _isDragging = true;
+        },
+        onPanUpdate: (details) {
+          setState(() {
+            _position = Offset(
+              (_position.dx + details.delta.dx).clamp(0, screenSize.width - 56),
+              (_position.dy + details.delta.dy).clamp(0, screenSize.height - 56),
+            );
+          });
+        },
+        onPanEnd: (details) {
+          _isDragging = false;
+          // 自動吸附到邊緣
+          setState(() {
+            if (_position.dx > screenSize.width / 2) {
+              _position = Offset(screenSize.width - 56 - 16, _position.dy);
+            } else {
+              _position = Offset(16, _position.dy);
+            }
+          });
+        },
+        onTap: () {
+          if (!_isDragging) {
+            widget.onPressed();
+          }
+        },
+        child: AnimatedBuilder(
+          animation: _scaleAnimation,
+          builder: (context, child) {
+            return Transform.scale(
+              scale: _scaleAnimation.value,
+              child: Material(
+                elevation: 8,
+                shape: const CircleBorder(),
+                color: Colors.blue,
+                child: Container(
+                  width: 56,
+                  height: 56,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Colors.blue,
+                        Colors.blueAccent,
+                      ],
+                    ),
+                  ),
+                  child: Stack(
+                    children: [
+                      const Center(
+                        child: Icon(
+                          Icons.add,
+                          color: Colors.white,
+                          size: 28,
+                        ),
+                      ),
+                      Positioned(
+                        top: 4,
+                        right: 4,
+                        child: GestureDetector(
+                          onTap: widget.onClose,
+                          child: Container(
+                            width: 16,
+                            height: 16,
+                            decoration: const BoxDecoration(
+                              color: Colors.red,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.close,
+                              color: Colors.white,
+                              size: 12,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+// End of file: services\overlay_service.dart
+
+
+// File: services\system_overlay_service.dart
+// --------------------------------------------------
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+class SystemOverlayService {
+  static const MethodChannel _channel = MethodChannel('system_overlay');
+  static bool _isOverlayVisible = false;
+  static bool _hasPermission = false;
+
+  static bool get isOverlayVisible => _isOverlayVisible;
+  static bool get hasPermission => _hasPermission;
+
+  /// 初始化系統級 Overlay 服務
+  static Future<void> initialize() async {
+    _channel.setMethodCallHandler(_handleMethodCall);
+    await _checkPermission();
+  }
+
+  /// 處理來自原生平台的方法調用
+  static Future<dynamic> _handleMethodCall(MethodCall call) async {
+    switch (call.method) {
+      case 'onOverlayClicked':
+        await _onOverlayClicked();
+        break;
+      case 'onPermissionResult':
+        _hasPermission = call.arguments['granted'] ?? false;
+        break;
+      default:
+        throw PlatformException(
+          code: 'Unimplemented',
+          details: 'Method ${call.method} not implemented',
+        );
+    }
+  }
+
+  /// 檢查系統級窗口權限
+  static Future<bool> checkPermission() async {
+    try {
+      final bool result = await _channel.invokeMethod('checkPermission');
+      _hasPermission = result;
+      return result;
+    } catch (e) {
+      print('檢查權限失敗: $e');
+      return false;
+    }
+  }
+
+  /// 請求系統級窗口權限
+  static Future<bool> requestPermission() async {
+    try {
+      final bool result = await _channel.invokeMethod('requestPermission');
+      _hasPermission = result;
+      return result;
+    } catch (e) {
+      print('請求權限失敗: $e');
+      return false;
+    }
+  }
+
+  /// 顯示系統級 Overlay
+  static Future<void> showSystemOverlay() async {
+    if (!_hasPermission) {
+      final granted = await requestPermission();
+      if (!granted) {
+        throw Exception('沒有系統級窗口權限');
+      }
+    }
+
+    try {
+      await _channel.invokeMethod('showOverlay', {
+        'x': 100.0,
+        'y': 100.0,
+        'width': 56.0,
+        'height': 56.0,
+        'text': '+',
+        'backgroundColor': '#2196F3',
+        'textColor': '#FFFFFF',
+      });
+      _isOverlayVisible = true;
+    } catch (e) {
+      print('顯示 Overlay 失敗: $e');
+      rethrow;
+    }
+  }
+
+  /// 隱藏系統級 Overlay
+  static Future<void> hideSystemOverlay() async {
+    try {
+      await _channel.invokeMethod('hideOverlay');
+      _isOverlayVisible = false;
+    } catch (e) {
+      print('隱藏 Overlay 失敗: $e');
+    }
+  }
+
+  /// 更新 Overlay 位置
+  static Future<void> updateOverlayPosition(double x, double y) async {
+    if (!_isOverlayVisible) return;
+
+    try {
+      await _channel.invokeMethod('updatePosition', {
+        'x': x,
+        'y': y,
+      });
+    } catch (e) {
+      print('更新位置失敗: $e');
+    }
+  }
+
+  /// 更新 Overlay 外觀
+  static Future<void> updateOverlayAppearance({
+    String? text,
+    String? backgroundColor,
+    String? textColor,
+  }) async {
+    if (!_isOverlayVisible) return;
+
+    try {
+      await _channel.invokeMethod('updateAppearance', {
+        if (text != null) 'text': text,
+        if (backgroundColor != null) 'backgroundColor': backgroundColor,
+        if (textColor != null) 'textColor': textColor,
+      });
+    } catch (e) {
+      print('更新外觀失敗: $e');
+    }
+  }
+
+  /// 切換 Overlay 顯示狀態
+  static Future<void> toggleOverlay() async {
+    if (_isOverlayVisible) {
+      await hideSystemOverlay();
+    } else {
+      await showSystemOverlay();
+    }
+  }
+
+  /// 檢查權限（內部方法）
+  static Future<void> _checkPermission() async {
+    _hasPermission = await checkPermission();
+  }
+
+  /// 處理 Overlay 點擊事件
+  static Future<void> _onOverlayClicked() async {
+    print('系統級 Overlay 被點擊了！');
+
+    // 打開 App 到新增備忘錄頁面
+    try {
+      await _channel.invokeMethod('openApp', {
+        'action': 'add_memo',
+      });
+    } catch (e) {
+      print('打開 App 失敗: $e');
+    }
+  }
+
+  /// 測試系統級 Overlay 功能
+  static Future<bool> testSystemOverlay() async {
+    try {
+      // 檢查權限
+      if (!await checkPermission()) {
+        print('❌ 沒有系統級窗口權限');
+        return false;
+      }
+
+      // 顯示 Overlay
+      await showSystemOverlay();
+      print('✅ 系統級 Overlay 顯示成功');
+
+      // 等待 3 秒
+      await Future.delayed(const Duration(seconds: 3));
+
+      // 隱藏 Overlay
+      await hideSystemOverlay();
+      print('✅ 系統級 Overlay 隱藏成功');
+
+      return true;
+    } catch (e) {
+      print('❌ 測試失敗: $e');
+      return false;
+    }
+  }
+
+  /// 獲取 Overlay 狀態資訊
+  static Map<String, dynamic> getOverlayInfo() {
+    return {
+      'isVisible': _isOverlayVisible,
+      'hasPermission': _hasPermission,
+      'platform': Theme.of(
+          WidgetsBinding.instance.platformDispatcher.views.first as BuildContext? ??
+              NavigatorState().context
+      ).platform.toString(),
+    };
+  }
+}
+
+/// 系統級 Overlay 控制 Widget
+class SystemOverlayControlWidget extends StatefulWidget {
+  const SystemOverlayControlWidget({Key? key}) : super(key: key);
+
+  @override
+  State<SystemOverlayControlWidget> createState() => _SystemOverlayControlWidgetState();
+}
+
+class _SystemOverlayControlWidgetState extends State<SystemOverlayControlWidget> {
+  bool _isLoading = false;
+  String _statusMessage = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeOverlay();
+  }
+
+  Future<void> _initializeOverlay() async {
+    setState(() {
+      _isLoading = true;
+      _statusMessage = '正在初始化...';
+    });
+
+    try {
+      await SystemOverlayService.initialize();
+      final hasPermission = await SystemOverlayService.checkPermission();
+
+      setState(() {
+        _statusMessage = hasPermission ? '已有權限' : '需要權限';
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _statusMessage = '初始化失敗: $e';
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _requestPermission() async {
+    setState(() {
+      _isLoading = true;
+      _statusMessage = '正在請求權限...';
+    });
+
+    try {
+      final granted = await SystemOverlayService.requestPermission();
+      setState(() {
+        _statusMessage = granted ? '權限已授予' : '權限被拒絕';
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _statusMessage = '請求權限失敗: $e';
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _toggleOverlay() async {
+    setState(() {
+      _isLoading = true;
+      _statusMessage = '正在切換 Overlay...';
+    });
+
+    try {
+      await SystemOverlayService.toggleOverlay();
+      setState(() {
+        _statusMessage = SystemOverlayService.isOverlayVisible
+            ? 'Overlay 已顯示'
+            : 'Overlay 已隱藏';
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _statusMessage = '操作失敗: $e';
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _testOverlay() async {
+    setState(() {
+      _isLoading = true;
+      _statusMessage = '正在測試 Overlay...';
+    });
+
+    try {
+      final success = await SystemOverlayService.testSystemOverlay();
+      setState(() {
+        _statusMessage = success ? '測試成功' : '測試失敗';
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _statusMessage = '測試失敗: $e';
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.all(16),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              '🚀 系統級 Overlay 控制',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // 狀態顯示
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('狀態: $_statusMessage'),
+                  const SizedBox(height: 4),
+                  Text('Overlay 可見: ${SystemOverlayService.isOverlayVisible ? "是" : "否"}'),
+                  Text('有權限: ${SystemOverlayService.hasPermission ? "是" : "否"}'),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // 控制按鈕
+            if (_isLoading)
+              const Center(child: CircularProgressIndicator())
+            else
+              Column(
+                children: [
+                  if (!SystemOverlayService.hasPermission)
+                    ElevatedButton.icon(
+                      onPressed: _requestPermission,
+                      icon: const Icon(Icons.security),
+                      label: const Text('請求系統級窗口權限'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.orange,
+                        foregroundColor: Colors.white,
+                      ),
+                    ),
+
+                  const SizedBox(height: 8),
+
+                  ElevatedButton.icon(
+                    onPressed: SystemOverlayService.hasPermission ? _toggleOverlay : null,
+                    icon: Icon(SystemOverlayService.isOverlayVisible
+                        ? Icons.visibility_off
+                        : Icons.visibility),
+                    label: Text(SystemOverlayService.isOverlayVisible
+                        ? '隱藏 Overlay'
+                        : '顯示 Overlay'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+
+                  const SizedBox(height: 8),
+
+                  ElevatedButton.icon(
+                    onPressed: SystemOverlayService.hasPermission ? _testOverlay : null,
+                    icon: const Icon(Icons.science),
+                    label: const Text('測試 Overlay 功能'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+
+            const SizedBox(height: 16),
+
+            // 說明文字
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.blue.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.blue.shade200),
+              ),
+              child: const Text(
+                '💡 說明：\n'
+                    '• 系統級 Overlay 需要特殊權限\n'
+                    '• 可在 App 外顯示浮動按鈕\n'
+                    '• 點擊可快速打開 App\n'
+                    '• 支援拖拽移動位置',
+                style: TextStyle(fontSize: 12),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// End of file: services\system_overlay_service.dart
+
+
+// File: tester\test_screen.dart
+// --------------------------------------------------
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:project2/services/overlay_service.dart';
+import 'package:project2/services/system_overlay_service.dart';
+
+class TestScreen extends StatefulWidget {
+  const TestScreen({Key? key}) : super(key: key);
+
+  @override
+  State<TestScreen> createState() => _TestScreenState();
+}
+
+class _TestScreenState extends State<TestScreen> {
+  List<String> _testResults = [];
+  bool _isRunningTests = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('App 功能測試'),
+        backgroundColor: Colors.green,
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // 測試說明
+            Card(
+              color: Colors.blue.shade50,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '🧪 App 功能測試',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blue,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      '此頁面可以測試 App 的各項功能是否正常運作，'
+                          '包括浮動按鈕可見性、資料庫連接、UI響應性等。',
+                      style: TextStyle(fontSize: 14),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // 測試按鈕區域
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  children: [
+                    const Text(
+                      '測試項目',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // 浮動按鈕測試
+                    _buildTestButton(
+                      '測試浮動按鈕可見性',
+                      Icons.visibility,
+                      Colors.blue,
+                      _testFloatingButtonVisibility,
+                    ),
+
+                    const SizedBox(height: 8),
+
+                    // 螢幕方向測試
+                    _buildTestButton(
+                      '測試螢幕方向切換',
+                      Icons.screen_rotation,
+                      Colors.orange,
+                      _testScreenRotation,
+                    ),
+
+                    const SizedBox(height: 8),
+
+                    // UI響應性測試
+                    _buildTestButton(
+                      '測試UI響應性',
+                      Icons.touch_app,
+                      Colors.green,
+                      _testUIResponsiveness,
+                    ),
+
+                    const SizedBox(height: 8),
+
+                    // 系統級 Overlay 測試
+                    _buildTestButton(
+                      '🚀 測試系統級 Overlay',
+                      Icons.open_in_new,
+                      Colors.purple,
+                      _testSystemOverlay,
+                    ),
+
+                    const SizedBox(height: 8),
+
+                    // 完整測試
+                    _buildTestButton(
+                      '執行完整測試',
+                      Icons.play_arrow,
+                      Colors.purple,
+                      _runFullTest,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // 測試結果顯示
+            Expanded(
+              child: Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Text(
+                            '測試結果',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const Spacer(),
+                          if (_testResults.isNotEmpty)
+                            TextButton(
+                              onPressed: _clearResults,
+                              child: const Text('清除'),
+                            ),
+                        ],
+                      ),
+                      const Divider(),
+                      Expanded(
+                        child: _isRunningTests
+                            ? const Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              CircularProgressIndicator(),
+                              SizedBox(height: 16),
+                              Text('正在執行測試...'),
+                            ],
+                          ),
+                        )
+                            : _testResults.isEmpty
+                            ? const Center(
+                          child: Text(
+                            '點擊上方按鈕開始測試\n測試結果將顯示在這裡',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: Colors.grey,
+                              fontSize: 16,
+                            ),
+                          ),
+                        )
+                            : ListView.builder(
+                          itemCount: _testResults.length,
+                          itemBuilder: (context, index) {
+                            final result = _testResults[index];
+                            final isSuccess = result.contains('✅');
+                            return ListTile(
+                              leading: Icon(
+                                isSuccess ? Icons.check_circle : Icons.error,
+                                color: isSuccess ? Colors.green : Colors.red,
+                              ),
+                              title: Text(result),
+                              dense: true,
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTestButton(
+      String title,
+      IconData icon,
+      Color color,
+      VoidCallback onPressed,
+      ) {
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton.icon(
+        onPressed: _isRunningTests ? null : onPressed,
+        icon: Icon(icon),
+        label: Text(title),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: color,
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(vertical: 12),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _testFloatingButtonVisibility() async {
+    setState(() {
+      _isRunningTests = true;
+    });
+
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    final isVisible = OverlayService.testFloatingButtonVisibility();
+    final result = isVisible
+        ? '✅ 浮動按鈕測試通過 - 系統級浮動按鈕目前可見'
+        : '❌ 浮動按鈕測試失敗 - 系統級浮動按鈕目前不可見';
+
+    setState(() {
+      _testResults.add('${DateTime.now().toString().substring(11, 19)} - $result');
+      _isRunningTests = false;
+    });
+
+    // 震動回饋
+    HapticFeedback.lightImpact();
+  }
+
+  Future<void> _testScreenRotation() async {
+    setState(() {
+      _isRunningTests = true;
+    });
+
+    try {
+      // 測試螢幕方向
+      await SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
+
+      await Future.delayed(const Duration(seconds: 1));
+
+      // 恢復自動旋轉
+      await SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.portraitDown,
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
+
+      setState(() {
+        _testResults.add('${DateTime.now().toString().substring(11, 19)} - ✅ 螢幕方向測試通過 - 支援直屏與橫屏');
+        _isRunningTests = false;
+      });
+    } catch (e) {
+      setState(() {
+        _testResults.add('${DateTime.now().toString().substring(11, 19)} - ❌ 螢幕方向測試失敗 - $e');
+        _isRunningTests = false;
+      });
+    }
+
+    HapticFeedback.lightImpact();
+  }
+
+  Future<void> _testUIResponsiveness() async {
+    setState(() {
+      _isRunningTests = true;
+    });
+
+    final stopwatch = Stopwatch()..start();
+
+    // 模擬UI操作
+    for (int i = 0; i < 10; i++) {
+      setState(() {});
+      await Future.delayed(const Duration(milliseconds: 16)); // 60fps
+    }
+
+    stopwatch.stop();
+    final avgFrameTime = stopwatch.elapsedMilliseconds / 10;
+
+    final result = avgFrameTime < 20
+        ? '✅ UI響應性測試通過 - 平均幀時間: ${avgFrameTime.toStringAsFixed(1)}ms'
+        : '❌ UI響應性測試警告 - 平均幀時間: ${avgFrameTime.toStringAsFixed(1)}ms (可能卡頓)';
+
+    setState(() {
+      _testResults.add('${DateTime.now().toString().substring(11, 19)} - $result');
+      _isRunningTests = false;
+    });
+
+    HapticFeedback.lightImpact();
+  }
+
+  Future<void> _runFullTest() async {
+    setState(() {
+      _isRunningTests = true;
+      _testResults.add('${DateTime.now().toString().substring(11, 19)} - 🚀 開始執行完整測試...');
+    });
+
+    // 依序執行所有測試
+    await _testFloatingButtonVisibility();
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    await _testScreenRotation();
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    await _testUIResponsiveness();
+
+
+    await _testSystemOverlay();
+
+    setState(() {
+      _testResults.add('${DateTime.now().toString().substring(11, 19)} - 🎉 完整測試執行完畢');
+      _isRunningTests = false;
+    });
+
+    // 顯示完成對話框
+    if (mounted) {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('測試完成'),
+          content: const Text('所有測試項目已執行完畢，請查看測試結果。\n\n特別注意系統級 Overlay 功能需要在主頁面手動開啟。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('確定'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    HapticFeedback.mediumImpact();
+  }
+
+  void _clearResults() {
+    setState(() {
+      _testResults.clear();
+    });
+  }
+
+  Future<void> _testSystemOverlay() async {
+    setState(() {
+      _isRunningTests = true;
+    });
+
+    try {
+      // 檢查權限
+      final hasPermission = await SystemOverlayService.checkPermission();
+
+      if (!hasPermission) {
+        setState(() {
+          _testResults.add('${DateTime.now().toString().substring(11, 19)} - ⚠️ 系統級 Overlay 測試 - 需要請求權限');
+        });
+
+        // 請求權限
+        final granted = await SystemOverlayService.requestPermission();
+        if (!granted) {
+          setState(() {
+            _testResults.add('${DateTime.now().toString().substring(11, 19)} - ❌ 系統級 Overlay 測試失敗 - 權限被拒絕');
+            _isRunningTests = false;
+          });
+          return;
+        }
+      }
+
+      // 執行測試
+      final success = await SystemOverlayService.testSystemOverlay();
+
+      setState(() {
+        _testResults.add('${DateTime.now().toString().substring(11, 19)} - ${success ? "✅" : "❌"} 系統級 Overlay 測試${success ? "通過" : "失敗"}');
+        _isRunningTests = false;
+      });
+
+      // 顯示說明對話框
+      if (mounted && success) {
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('🚀 系統級 Overlay 測試成功'),
+            content: const Text(
+              '測試已完成！\n\n'
+                  '你可以：\n'
+                  '• 在主頁面開啟系統級浮動按鈕\n'
+                  '• 將 App 最小化到背景\n'
+                  '• 在桌面上看到浮動按鈕\n'
+                  '• 點擊浮動按鈕快速打開 App',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('了解'),
+              ),
+            ],
+          ),
+        );
+      }
+    } catch (e) {
+      setState(() {
+        _testResults.add('${DateTime.now().toString().substring(11, 19)} - ❌ 系統級 Overlay 測試異常 - $e');
+        _isRunningTests = false;
+      });
+    }
+
+    HapticFeedback.mediumImpact();
+  }
+}
+
+// End of file: tester\test_screen.dart
+
+
+// File: widgets\dual_view_application.dart
+// --------------------------------------------------
+import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import 'package:project2/models/memo_repository.dart';
+import 'package:project2/models/task_repository.dart';
+import 'package:project2/providers/memo_providers.dart';
+import 'package:project2/providers/providers.dart' as old_providers;
+
+
+import 'package:project2/screens/dual_view_screen.dart';
+
+class DualViewApp extends StatelessWidget {
+  final bool isDarkMode;
+  final MemoRepository memoRepository;
+  final TaskRepository taskRepository;
+
+  const DualViewApp({
+    Key? key,
+    required this.isDarkMode,
+    required this.memoRepository,
+    required this.taskRepository,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return MultiProvider(
+      providers: [
+        // 新的備忘錄系統 Providers
+        ChangeNotifierProvider(
+          create: (_) => MemoProvider(repository: memoRepository),
+        ),
+        // 舊的 Todo List 系統 Providers
+        ChangeNotifierProvider(
+          create: (_) => old_providers.TaskProvider(repository: taskRepository),
+        ),
+        // 共用的主題 Provider
+        ChangeNotifierProvider(
+          create: (_) => old_providers.ThemeProvider(isDarkMode: isDarkMode),
+        ),
+      ],
+      child: Builder(
+        builder: (context) {
+          final themeProvider = Provider.of<old_providers.ThemeProvider>(context);
+
+          return MaterialApp(
+            title: 'Memo & Todo List',
+            debugShowCheckedModeBanner: false,
+            theme: ThemeData(
+              colorScheme: ColorScheme.fromSeed(
+                seedColor: Colors.blue,
+                brightness: Brightness.light,
+              ),
+              useMaterial3: true,
+              appBarTheme: const AppBarTheme(
+                centerTitle: true,
+                elevation: 2,
+              ),
+              floatingActionButtonTheme: const FloatingActionButtonThemeData(
+                backgroundColor: Colors.blue,
+                foregroundColor: Colors.white,
+              ),
+              cardTheme: CardTheme(
+                elevation: 2,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+            darkTheme: ThemeData(
+              colorScheme: ColorScheme.fromSeed(
+                seedColor: Colors.blue,
+                brightness: Brightness.dark,
+              ),
+              useMaterial3: true,
+              appBarTheme: const AppBarTheme(
+                centerTitle: true,
+                elevation: 2,
+              ),
+              cardTheme: CardTheme(
+                elevation: 2,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+            themeMode: themeProvider.themeMode,
+            home: const DualViewScreen(),
+            // 支援直屏與橫屏
+            builder: (context, child) {
+              return MediaQuery(
+                data: MediaQuery.of(context).copyWith(
+                  textScaleFactor: MediaQuery.of(context).textScaleFactor.clamp(0.8, 1.2),
+                ),
+                child: child!,
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+// End of file: widgets\dual_view_application.dart
+
+
+// File: widgets\my_app.dart
+// --------------------------------------------------
+import 'package:flutter/cupertino.dart'              ;
+
+import 'package:project2/models/task_repository.dart';
+import 'package:project2/main.dart'                  ;
+import 'package:project2/models/memo_repository.dart';
+
+import 'dual_view_application.dart';
+
+class MyApp extends StatelessWidget {
+  final bool isDarkMode;
+  final TaskRepository taskRepository;
+
+  const MyApp({
+    Key? key,
+    required this.isDarkMode,
+    required this.taskRepository,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    // 這是為了保持與舊代碼的相容性
+    return DualViewApp(
+      isDarkMode: isDarkMode,
+      memoRepository: MemoRepository(),
+      taskRepository: taskRepository,
+    );
+  }
+}
+
+// End of file: widgets\my_app.dart
+
+
 // File: widgets\priority_selector.dart
 // --------------------------------------------------
 import 'package:flutter/material.dart';
@@ -2015,15 +5220,500 @@ class TaskListItem extends StatelessWidget {
 // --------------------------------------------------
 package com.example.project2
 
+// 檔案位置: android/app/src/main/kotlin/com/example/project2/MainActivity.kt
+
+
+
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import android.widget.Toast
+import androidx.annotation.NonNull
 import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodCall
+import io.flutter.plugin.common.MethodChannel
 
-class MainActivity: FlutterActivity()
+class MainActivity: FlutterActivity() {
+    private val CHANNEL = "system_overlay"
+    private val OVERLAY_PERMISSION_REQUEST_CODE = 1000
 
+    private var methodChannel: MethodChannel? = null
+
+    override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
+
+        // 初始化 MethodChannel
+        methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
+        methodChannel?.setMethodCallHandler { call, result ->
+            handleMethodCall(call, result)
+        }
+    }
+
+    private fun handleMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        try {
+            when (call.method) {
+                "checkPermission" -> {
+                    result.success(checkOverlayPermission())
+                }
+                "requestPermission" -> {
+                    requestOverlayPermission()
+                    result.success(true)
+                }
+                "showOverlay" -> {
+                    if (showSystemOverlay()) {
+                        result.success(true)
+                    } else {
+                        result.error("PERMISSION_DENIED", "沒有系統級窗口權限", null)
+                    }
+                }
+                "hideOverlay" -> {
+                    hideSystemOverlay()
+                    result.success(true)
+                }
+                "isServiceRunning" -> {
+                    result.success(OverlayService.isRunning())
+                }
+                "openApp" -> {
+                    val args = call.arguments as? Map<String, Any>
+                    openApp(args)
+                    result.success(true)
+                }
+                else -> {
+                    result.notImplemented()
+                }
+            }
+        } catch (e: Exception) {
+            result.error("ERROR", "操作失敗: ${e.message}", e.toString())
+        }
+    }
+
+    /**
+     * 檢查系統級窗口權限
+     */
+    private fun checkOverlayPermission(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            Settings.canDrawOverlays(this)
+        } else {
+            true
+        }
+    }
+
+    /**
+     * 請求系統級窗口權限
+     */
+    private fun requestOverlayPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (!Settings.canDrawOverlays(this)) {
+                try {
+                    val intent = Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:$packageName")
+                    )
+                    startActivityForResult(intent, OVERLAY_PERMISSION_REQUEST_CODE)
+                } catch (e: Exception) {
+                    // 備用方案：打開設定頁面
+                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                    intent.data = Uri.parse("package:$packageName")
+                    startActivity(intent)
+                }
+            }
+        }
+    }
+
+    /**
+     * 顯示系統級 Overlay (使用前台服務)
+     */
+    private fun showSystemOverlay(): Boolean {
+        if (!checkOverlayPermission()) {
+            return false
+        }
+
+        try {
+            // 啟動前台服務來保持 Overlay 運行
+            OverlayService.startService(this)
+            return true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return false
+        }
+    }
+
+    /**
+     * 隱藏系統級 Overlay (停止前台服務)
+     */
+    private fun hideSystemOverlay() {
+        try {
+            OverlayService.stopService(this)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    /**
+     * 打開 App
+     */
+    private fun openApp(args: Map<String, Any>?) {
+        try {
+            val intent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra("action", args?.get("action") as? String ?: "")
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    /**
+     * 處理權限請求結果
+     */
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+
+        if (requestCode == OVERLAY_PERMISSION_REQUEST_CODE) {
+            val granted = checkOverlayPermission()
+            methodChannel?.invokeMethod("onPermissionResult", mapOf("granted" to granted))
+
+            if (granted) {
+                Toast.makeText(this, "系統級窗口權限已授予", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(this, "需要系統級窗口權限才能使用此功能", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+
+        // 檢查是否從 Overlay 點擊進入
+        val action = intent.getStringExtra("action")
+        if (action == "add_memo") {
+            // 可以在這裡直接導航到新增備忘錄頁面
+            methodChannel?.invokeMethod("onOverlayClicked", mapOf("action" to action))
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // 當 App 完全關閉時才停止服務
+        if (isFinishing) {
+            OverlayService.stopService(this)
+        }
+    }
+}
 
 // End of file: MainActivity.kt
 
 
+// File: OverlayService.kt
+// --------------------------------------------------
+// 檔案位置: android/app/src/main/kotlin/com/example/project2/OverlayService.kt
+
+package com.example.project2
+
+import android.app.*
+import android.content.Context
+import android.content.Intent
+import android.graphics.Color
+import android.graphics.PixelFormat
+import android.os.Build
+import android.os.IBinder
+import android.provider.Settings
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
+import android.view.WindowManager
+import android.widget.Button
+import androidx.core.app.NotificationCompat
+
+class OverlayService : Service() {
+
+    companion object {
+        private const val NOTIFICATION_ID = 1001
+        private const val CHANNEL_ID = "overlay_service_channel"
+        private var isServiceRunning = false
+
+        fun startService(context: Context) {
+            if (!isServiceRunning) {
+                val intent = Intent(context, OverlayService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            }
+        }
+
+        fun stopService(context: Context) {
+            val intent = Intent(context, OverlayService::class.java)
+            context.stopService(intent)
+        }
+
+        fun isRunning(): Boolean = isServiceRunning
+    }
+
+    private var windowManager: WindowManager? = null
+    private var overlayView: View? = null
+    private var overlayParams: WindowManager.LayoutParams? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        createNotificationChannel()
+        isServiceRunning = true
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // 啟動前台通知
+        startForeground(NOTIFICATION_ID, createNotification())
+
+        // 顯示 Overlay
+        showOverlay()
+
+        // 返回 START_STICKY 讓服務在被殺死後重啟
+        return START_STICKY
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onDestroy() {
+        super.onDestroy()
+        hideOverlay()
+        isServiceRunning = false
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "浮動按鈕服務",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "保持浮動按鈕在背景運行"
+                setSound(null, null)
+                enableVibration(false)
+                setShowBadge(false)
+            }
+
+            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun createNotification(): Notification {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, intent,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
+        )
+
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("浮動按鈕已啟用")
+            .setContentText("點擊通知返回應用")
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentIntent(pendingIntent)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOngoing(true)
+            .setShowWhen(false)
+            .addAction(
+                android.R.drawable.ic_menu_close_clear_cancel,
+                "關閉",
+                createStopServicePendingIntent()
+            )
+            .build()
+    }
+
+    private fun createStopServicePendingIntent(): PendingIntent {
+        val intent = Intent(this, OverlayService::class.java).apply {
+            action = "STOP_SERVICE"
+        }
+
+        return PendingIntent.getService(
+            this, 0, intent,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
+        )
+    }
+
+    private fun showOverlay() {
+        if (!Settings.canDrawOverlays(this)) {
+            return
+        }
+
+        try {
+            // 如果已存在，先移除
+            hideOverlay()
+
+            // 創建浮動按鈕
+            val overlayButton = Button(this).apply {
+                text = "+"
+                setBackgroundColor(Color.parseColor("#2196F3"))
+                setTextColor(Color.WHITE)
+                textSize = 18f
+
+                setOnClickListener {
+                    openMainActivity()
+                }
+            }
+
+            // 設置布局參數
+            overlayParams = WindowManager.LayoutParams().apply {
+                width = 150
+                height = 150
+
+                type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                } else {
+                    @Suppress("DEPRECATION")
+                    WindowManager.LayoutParams.TYPE_PHONE
+                }
+
+                flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+
+                format = PixelFormat.TRANSLUCENT
+                gravity = Gravity.TOP or Gravity.START
+
+                x = 100
+                y = 200
+            }
+
+            // 添加觸摸事件處理
+            overlayButton.setOnTouchListener(OverlayTouchListener())
+
+            // 添加到窗口
+            windowManager?.addView(overlayButton, overlayParams)
+            overlayView = overlayButton
+
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun hideOverlay() {
+        try {
+            overlayView?.let { view ->
+                windowManager?.removeView(view)
+                overlayView = null
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun openMainActivity() {
+        try {
+            val intent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP
+                putExtra("action", "add_memo")
+            }
+            startActivity(intent)
+
+            // 震動反饋
+            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+            vibrator?.let {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    it.vibrate(android.os.VibrationEffect.createOneShot(100, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+                } else {
+                    @Suppress("DEPRECATION")
+                    it.vibrate(100)
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    /**
+     * 觸摸事件監聽器（用於拖拽）
+     */
+    private inner class OverlayTouchListener : View.OnTouchListener {
+        private var initialX = 0
+        private var initialY = 0
+        private var initialTouchX = 0f
+        private var initialTouchY = 0f
+
+        override fun onTouch(view: View, event: MotionEvent): Boolean {
+            try {
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        initialX = overlayParams?.x ?: 0
+                        initialY = overlayParams?.y ?: 0
+                        initialTouchX = event.rawX
+                        initialTouchY = event.rawY
+                        return true
+                    }
+
+                    MotionEvent.ACTION_MOVE -> {
+                        if (overlayParams != null) {
+                            overlayParams?.x = initialX + (event.rawX - initialTouchX).toInt()
+                            overlayParams?.y = initialY + (event.rawY - initialTouchY).toInt()
+                            windowManager?.updateViewLayout(view, overlayParams)
+                        }
+                        return true
+                    }
+
+                    MotionEvent.ACTION_UP -> {
+                        val deltaX = event.rawX - initialTouchX
+                        val deltaY = event.rawY - initialTouchY
+
+                        // 如果移動距離很小，視為點擊
+                        if (kotlin.math.abs(deltaX) < 10 && kotlin.math.abs(deltaY) < 10) {
+                            view.performClick()
+                        }
+
+                        // 邊緣吸附效果
+                        snapToEdge()
+                        return true
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            return false
+        }
+
+        private fun snapToEdge() {
+            try {
+                overlayParams?.let { params ->
+                    val displayMetrics = resources.displayMetrics
+                    val screenWidth = displayMetrics.widthPixels
+
+                    // 自動吸附到最近的邊緣
+                    if (params.x > screenWidth / 2) {
+                        params.x = screenWidth - 150 - 20  // 右邊緣
+                    } else {
+                        params.x = 20  // 左邊緣
+                    }
+
+                    windowManager?.updateViewLayout(overlayView, params)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+}
+
+// End of file: OverlayService.kt
+
+
 // ==========================================================
-// Total files processed: 13
-// Generation completed: 2025-06-02T00:19:11.562139
+// Total files processed: 28
+// Generation completed: 2025-06-03T12:20:34.692300
 // ==========================================================

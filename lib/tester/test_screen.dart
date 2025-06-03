@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:project2/services/overlay_service.dart';
-
+import 'package:project2/services/system_overlay_service.dart';
 
 class TestScreen extends StatefulWidget {
   const TestScreen({Key? key}) : super(key: key);
@@ -96,6 +96,16 @@ class _TestScreenState extends State<TestScreen> {
                       Icons.touch_app,
                       Colors.green,
                       _testUIResponsiveness,
+                    ),
+
+                    const SizedBox(height: 8),
+
+                    // 系統級 Overlay 測試
+                    _buildTestButton(
+                      '🚀 測試系統級 Overlay',
+                      Icons.open_in_new,
+                      Colors.purple,
+                      _testSystemOverlay,
                     ),
 
                     const SizedBox(height: 8),
@@ -312,6 +322,9 @@ class _TestScreenState extends State<TestScreen> {
 
     await _testUIResponsiveness();
 
+
+    await _testSystemOverlay();
+
     setState(() {
       _testResults.add('${DateTime.now().toString().substring(11, 19)} - 🎉 完整測試執行完畢');
       _isRunningTests = false;
@@ -323,7 +336,7 @@ class _TestScreenState extends State<TestScreen> {
         context: context,
         builder: (context) => AlertDialog(
           title: const Text('測試完成'),
-          content: const Text('所有測試項目已執行完畢，請查看測試結果。'),
+          content: const Text('所有測試項目已執行完畢，請查看測試結果。\n\n特別注意系統級 Overlay 功能需要在主頁面手動開啟。'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
@@ -341,5 +354,71 @@ class _TestScreenState extends State<TestScreen> {
     setState(() {
       _testResults.clear();
     });
+  }
+
+  Future<void> _testSystemOverlay() async {
+    setState(() {
+      _isRunningTests = true;
+    });
+
+    try {
+      // 檢查權限
+      final hasPermission = await SystemOverlayService.checkPermission();
+
+      if (!hasPermission) {
+        setState(() {
+          _testResults.add('${DateTime.now().toString().substring(11, 19)} - ⚠️ 系統級 Overlay 測試 - 需要請求權限');
+        });
+
+        // 請求權限
+        final granted = await SystemOverlayService.requestPermission();
+        if (!granted) {
+          setState(() {
+            _testResults.add('${DateTime.now().toString().substring(11, 19)} - ❌ 系統級 Overlay 測試失敗 - 權限被拒絕');
+            _isRunningTests = false;
+          });
+          return;
+        }
+      }
+
+      // 執行測試
+      final success = await SystemOverlayService.testSystemOverlay();
+
+      setState(() {
+        _testResults.add('${DateTime.now().toString().substring(11, 19)} - ${success ? "✅" : "❌"} 系統級 Overlay 測試${success ? "通過" : "失敗"}');
+        _isRunningTests = false;
+      });
+
+      // 顯示說明對話框
+      if (mounted && success) {
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('🚀 系統級 Overlay 測試成功'),
+            content: const Text(
+              '測試已完成！\n\n'
+                  '你可以：\n'
+                  '• 在主頁面開啟系統級浮動按鈕\n'
+                  '• 將 App 最小化到背景\n'
+                  '• 在桌面上看到浮動按鈕\n'
+                  '• 點擊浮動按鈕快速打開 App',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('了解'),
+              ),
+            ],
+          ),
+        );
+      }
+    } catch (e) {
+      setState(() {
+        _testResults.add('${DateTime.now().toString().substring(11, 19)} - ❌ 系統級 Overlay 測試異常 - $e');
+        _isRunningTests = false;
+      });
+    }
+
+    HapticFeedback.mediumImpact();
   }
 }

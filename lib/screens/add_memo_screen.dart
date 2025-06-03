@@ -94,7 +94,7 @@ class _AddMemoScreenState extends State<AddMemoScreen> {
     final notificationService = NotificationService();
 
     // 顯示建立確認通知
-    await notificationService.showMemoCreated(memo);
+
 
     // 如果時間是未來時間，也可以在這裡設置定時提醒
     // 注意：這裡只是即時通知，真正的定時通知需要更複雜的實作
